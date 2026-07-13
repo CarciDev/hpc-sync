@@ -1,0 +1,231 @@
+{
+  "name": "hpc-sync",
+  "displayName": "HPC Sync",
+  "description": "Sync, build, run and monitor Slurm/Apptainer HPC workloads from VS Code over a single shared SSH session, with a visual job builder and a live cluster dashboard.",
+  "version": "0.1.0",
+  "publisher": "david-carciente",
+  "private": true,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/david-carciente/hpc-sync.git"
+  },
+  "bugs": {
+    "url": "https://github.com/david-carciente/hpc-sync/issues"
+  },
+  "homepage": "https://github.com/david-carciente/hpc-sync#readme",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [],
+  "scripts": {
+    "compile": "tsc -p ./ && node scripts/check-webviews.js",
+    "watch": "tsc -watch -p ./",
+    "package": "npm run compile && vsce package"
+  },
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "hpcSync",
+          "title": "HPC Sync",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "hpcSync": [
+        {
+          "type": "webview",
+          "id": "hpcSync.pipeline",
+          "name": "Pipeline",
+          "icon": "media/icon.svg"
+        },
+        {
+          "type": "webview",
+          "id": "hpcSync.jobs",
+          "name": "Slurm Jobs",
+          "icon": "media/icon.svg"
+        },
+        {
+          "type": "webview",
+          "id": "hpcSync.cluster",
+          "name": "Cluster",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "commands": [
+      { "command": "hpcSync.connect", "title": "HPC Sync: Connect" },
+      { "command": "hpcSync.setup", "title": "HPC Sync: Setup SSH (Onboarding)" },
+      { "command": "hpcSync.projectManager", "title": "HPC Sync: Project Manager" },
+      { "command": "hpcSync.disconnect", "title": "HPC Sync: Disconnect" },
+      { "command": "hpcSync.sync", "title": "HPC Sync: Sync (auto fast/slow path)" },
+      { "command": "hpcSync.forceRebuild", "title": "HPC Sync: Force Rebuild (.sif)" },
+      { "command": "hpcSync.dryRun", "title": "HPC Sync: Dry Run Preview" },
+      { "command": "hpcSync.markEnvBuilt", "title": "HPC Sync: Mark Environment As Built (skip rebuild)" },
+      { "command": "hpcSync.run", "title": "HPC Sync: Run Script on HPC…" },
+      { "command": "hpcSync.launch", "title": "HPC Sync: Launch on HPC (job builder)…", "icon": "$(rocket)" },
+      { "command": "hpcSync.submitJob", "title": "HPC Sync: Submit Slurm Job…" },
+      { "command": "hpcSync.cancelSync", "title": "HPC Sync: Cancel Current Sync" },
+      { "command": "hpcSync.refreshJobs", "title": "HPC Sync: Refresh Jobs", "icon": "$(refresh)" },
+      { "command": "hpcSync.refreshCluster", "title": "HPC Sync: Refresh Cluster Status", "icon": "$(refresh)" },
+      { "command": "hpcSync.rebuildUsagePattern", "title": "HPC Sync: Rebuild Submission-Pattern Analysis" },
+      { "command": "hpcSync.benchmarkStorage", "title": "HPC Sync: Benchmark Cluster Storage" },
+      { "command": "hpcSync.showLog", "title": "HPC Sync: Show Log" },
+      { "command": "hpcSync.openSettings", "title": "HPC Sync: Open Settings" }
+    ],
+    "menus": {
+      "editor/title/run": [
+        {
+          "command": "hpcSync.launch",
+          "when": "resourceExtname == .py",
+          "group": "navigation"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "hpcSync.launch",
+          "when": "resourceExtname == .py",
+          "group": "2_workspace"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "hpcSync.refreshJobs",
+          "when": "view == hpcSync.jobs",
+          "group": "navigation"
+        },
+        {
+          "command": "hpcSync.refreshCluster",
+          "when": "view == hpcSync.cluster",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "HPC Sync",
+      "properties": {
+        "hpcSync.host": {
+          "type": "string",
+          "default": "",
+          "description": "HPC login node hostname (e.g. rorqual.alliancecan.ca). Set at the USER level — it is your identity, not the project's."
+        },
+        "hpcSync.user": {
+          "type": "string",
+          "default": "",
+          "description": "Username on the HPC cluster. Set at the USER level."
+        },
+        "hpcSync.allocGroup": {
+          "type": "string",
+          "default": "",
+          "description": "Allocation / account group (e.g. rrg-pi). Used for project storage paths and sbatch account. Set at the USER level."
+        },
+        "hpcSync.privateKeyPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to an SSH private key (optional). The SSH agent is tried first; password auth is the fallback. 2FA prompts (Duo) are shown once per session and the connection is reused for all operations."
+        },
+        "hpcSync.remoteProjectDir": {
+          "type": "string",
+          "default": "~/projects/${workspaceName}",
+          "description": "Remote directory where scripts are rsync'd (bind/shell target). Supports ${workspaceName}. Override per project in .vscode/settings.json when a project has an established location."
+        },
+        "hpcSync.remoteSifDir": {
+          "type": "string",
+          "default": "~/containers",
+          "description": "Remote directory where the built .sif image is stored. Supports ${workspaceName}."
+        },
+        "hpcSync.apptainerLoad": {
+          "type": "string",
+          "default": "module load apptainer",
+          "description": "Command that puts apptainer in PATH on the HPC."
+        },
+        "hpcSync.dockerImageName": {
+          "type": "string",
+          "default": "",
+          "description": "Local Docker image to export on the slow path (run 'docker images' to find it). Set per project in .vscode/settings.json."
+        },
+        "hpcSync.sifName": {
+          "type": "string",
+          "default": "${workspaceName}.sif",
+          "description": "Filename of the Apptainer image built on the HPC. Supports ${workspaceName}."
+        },
+        "hpcSync.tarName": {
+          "type": "string",
+          "default": "${workspaceName}.tar",
+          "description": "Filename of the exported Docker tar. Supports ${workspaceName}."
+        },
+        "hpcSync.dockerfilePath": {
+          "type": "string",
+          "default": ".devcontainer/Dockerfile",
+          "description": "Dockerfile watched for environment changes (relative to workspace root or absolute)."
+        },
+        "hpcSync.requirementsPath": {
+          "type": "string",
+          "default": "requirements.txt",
+          "description": "Requirements file watched for environment changes (relative to workspace root or absolute)."
+        },
+        "hpcSync.outputDir": {
+          "type": "string",
+          "default": "~/scratch/${workspaceName}_output",
+          "description": "Value passed as --env OUTPUT_DIR when running workloads. Supports ${workspaceName}. Override per project."
+        },
+        "hpcSync.containerWorkdir": {
+          "type": "string",
+          "default": "/workspaces/${workspaceName}",
+          "description": "Path the remote project dir is bound to inside the container. Supports ${workspaceName}."
+        },
+        "hpcSync.jobsPollIntervalSeconds": {
+          "type": "number",
+          "default": 15,
+          "minimum": 5,
+          "description": "How often the Slurm jobs view refreshes while connected."
+        },
+        "hpcSync.recentJobsHours": {
+          "type": "number",
+          "default": 24,
+          "description": "How far back sacct looks for recently finished jobs."
+        },
+        "hpcSync.excludes": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Extra .gitignore-style patterns excluded from script sync (on top of .gitignore/.dockerignore). Set per project for large data caches that must never upload to the remote project dir."
+        },
+        "hpcSync.confirmUploadOverMB": {
+          "type": "number",
+          "default": 200,
+          "minimum": 1,
+          "description": "Ask for confirmation before a script sync uploads more than this many MB (guards against accidentally syncing large data files into home)."
+        },
+        "hpcSync.autoRebuildDevcontainer": {
+          "type": "string",
+          "enum": ["prompt", "always", "never"],
+          "default": "prompt",
+          "description": "When the extension changes the Dockerfile (mount ENV sync, scaffolding) while you are in a dev container: prompt to rebuild, rebuild automatically, or do nothing. Rebuilding restarts the container/window."
+        },
+        "hpcSync.clusterPollIntervalSeconds": {
+          "type": "number",
+          "default": 120,
+          "minimum": 30,
+          "description": "How often the Cluster view (storage quotas, node/CPU/GPU availability) refreshes while connected."
+        }
+      }
+    }
+  },
+  "dependencies": {
+    "ignore": "^5.3.1",
+    "ssh2": "^1.15.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/ssh2": "^1.15.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.4.0"
+  }
+}
