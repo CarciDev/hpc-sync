@@ -53,6 +53,36 @@ All settings are under the `hpcSync.*` namespace and documented in the settings 
 | `hpcSync.excludes` | project | Extra sync-exclusion patterns for large data caches |
 | `hpcSync.autoRebuildDevcontainer` | user | `prompt` / `always` / `never` when the Dockerfile changes |
 
+## Dev containers
+
+Extensions installed from a `.vsix` live inside the container and are removed
+when the container is rebuilt. To keep HPC Sync across rebuilds, persist the
+extensions directory with a named volume in `devcontainer.json`:
+
+```jsonc
+"mounts": [
+  "source=vscode-extensions,target=/home/vscode/.vscode-server/extensions,type=volume"
+]
+```
+
+and pre-create that directory with the container user's ownership in the
+Dockerfile so the server can write to it:
+
+```dockerfile
+RUN mkdir -p /home/vscode/.vscode-server/extensions \
+    && chown -R vscode:vscode /home/vscode/.vscode-server
+```
+
+Once the extension is published to a marketplace (VS Code Marketplace or
+Open VSX), it can instead be listed by ID under
+`customizations.vscode.extensions` and VS Code installs it into the container
+automatically.
+
+Identity settings (`hpcSync.host`, `.user`, `.allocGroup`) are stored at the
+user level, so they follow you across machines and containers through VS Code
+Settings Sync — you only fill in the onboarding once per account, not per
+project.
+
 ## Development
 
 ```bash

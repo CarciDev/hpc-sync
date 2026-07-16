@@ -13,6 +13,7 @@ import { log } from './log';
 import { PipelineViewProvider } from './pipelineView';
 import { ProjectManagerPanel } from './projectManager';
 import { setupCommand } from './setup';
+import { discoverKeys, publicKeyText } from './sshKeys';
 import { SshManager } from './sshManager';
 import { StorageBench } from './storageBench';
 import { SyncEngine } from './syncEngine';
@@ -130,12 +131,22 @@ export function activate(context: vscode.ExtensionContext): void {
     try {
       await ssh.ensureConnected();
     } catch (e) {
+      const msg = (e as Error).message;
+      // Auth failures on Alliance clusters are almost always an unregistered key.
+      const looksLikeAuth = /authentication|permission denied|publickey|no matching/i.test(msg);
+      const buttons = looksLikeAuth
+        ? ['Show public key / register on CCDB', 'Setup SSH', 'Show Log']
+        : ['Setup SSH', 'Show Log'];
       const choice = await vscode.window.showErrorMessage(
-        `HPC Sync: connection failed — ${(e as Error).message}`,
-        'Setup SSH',
-        'Show Log'
+        `HPC Sync: connection failed — ${msg}` +
+          (looksLikeAuth
+            ? '\n\nIf you use key auth, your public key may not be registered on the cluster. Register it on the CCDB website, then try again.'
+            : ''),
+        ...buttons
       );
-      if (choice === 'Setup SSH') {
+      if (choice === 'Show public key / register on CCDB') {
+        void vscode.commands.executeCommand('hpcSync.showPublicKey');
+      } else if (choice === 'Setup SSH') {
         void vscode.commands.executeCommand('hpcSync.setup');
       } else if (choice === 'Show Log') {
         log.show(true);
@@ -144,6 +155,55 @@ export function activate(context: vscode.ExtensionContext): void {
   });
 
   register('hpcSync.setup', () => void setupCommand(ssh));
+
+  const CCDB_KEYS_URL = 'https://ccdb.alliancecan.ca/ssh_authorized_keys';
+  register('hpcSync.showPublicKey', async () => {
+    const cfg = getConfig();
+    const keys = discoverKeys(cfg);
+    let pub: string | undefined;
+    for (const k of keys) {
+      pub = publicKeyText(k.path);
+      if (pub) {
+        break;
+      }
+    }
+    if (!pub) {
+      const choice = await vscode.window.showInformationMessage(
+        'No SSH key file was found to display. Generate one now, or use the guided setup?',
+        'Generate key',
+        'Guided setup'
+      );
+      if (choice) {
+        void setupCommand(ssh);
+      }
+      return;
+    }
+    log.appendLine(`\n[ssh] your public key (register this on the cluster):\n${pub}\n`);
+    const choice = await vscode.window.showInformationMessage(
+      'This is your SSH PUBLIC key. On Alliance Canada clusters you must register it on the CCDB website ' +
+        '(My Account → Manage SSH Keys) — putting it only in ~/.ssh/authorized_keys is not enough.',
+      'Copy public key',
+      'Open CCDB to register',
+      'Show key text'
+    );
+    if (choice === 'Copy public key') {
+      await vscode.env.clipboard.writeText(pub);
+      const next = await vscode.window.showInformationMessage(
+        'Public key copied. Paste it into CCDB → Manage SSH Keys, then try Connect again.',
+        'Open CCDB'
+      );
+      if (next === 'Open CCDB') {
+        void vscode.env.openExternal(vscode.Uri.parse(CCDB_KEYS_URL));
+      }
+    } else if (choice === 'Open CCDB to register') {
+      await vscode.env.clipboard.writeText(pub);
+      void vscode.window.showInformationMessage('Public key copied to clipboard — paste it into the CCDB page.');
+      void vscode.env.openExternal(vscode.Uri.parse(CCDB_KEYS_URL));
+    } else if (choice === 'Show key text') {
+      const doc = await vscode.workspace.openTextDocument({ content: pub + '\n', language: 'plaintext' });
+      await vscode.window.showTextDocument(doc, { preview: true });
+    }
+  });
   register('hpcSync.projectManager', () => ProjectManagerPanel.show(ssh, engine, context.globalState));
 
   register('hpcSync.disconnect', () => ssh.disconnect());

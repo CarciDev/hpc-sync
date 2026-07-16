@@ -4,6 +4,19 @@ All notable changes to this project are documented here. The format is loosely
 based on [Keep a Changelog](https://keepachangelog.com/), and the project
 follows semantic-ish versioning while pre-1.0.
 
+## [0.14.0]
+### Added
+- Inline onboarding wizard in the Pipeline view: fill host, username, account,
+  and SSH key step by step instead of using opaque buttons.
+- "Show SSH Public Key" command that displays the public key, copies it, and
+  opens the CCDB page to register it — surfaced automatically when a connection
+  fails on authentication.
+### Changed
+- Connection failures that look like authentication problems point to key
+  registration.
+### Docs
+- Dev-container persistence and Settings Sync guidance in the README.
+
 ## [0.13.1]
 ### Security
 - Verify the SSH host key (trust-on-first-use) instead of accepting any key,
@@ -114,6 +127,7 @@ follows semantic-ish versioning while pre-1.0.
 - Initial release: fast/slow-path sync, Slurm jobs view, single-session SSH with
   one-time 2FA, pipeline view, and SSH onboarding.
 
+[0.14.0]: ../../releases/tag/v0.14.0
 [0.13.1]: ../../releases/tag/v0.13.1
 [0.13.0]: ../../releases/tag/v0.13.0
 [0.12.0]: ../../releases/tag/v0.12.0

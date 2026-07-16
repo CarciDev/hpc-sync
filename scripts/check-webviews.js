@@ -13,7 +13,7 @@ const vscodeStub = {
       dispose() {},
     }),
   },
-  workspace: { workspaceFolders: undefined, getConfiguration: () => ({ get: (_k, d) => d }) },
+  workspace: { workspaceFolders: undefined, getConfiguration: () => ({ get: (_k, d) => d }), onDidChangeConfiguration: eventFn, createFileSystemWatcher: () => ({ onDidChange: eventFn, onDidCreate: eventFn, onDidDelete: eventFn, dispose() {} }) },
   EventEmitter: class {
     get event() { return eventFn; }
     fire() {}
