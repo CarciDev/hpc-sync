@@ -58,6 +58,9 @@ export class ProjectsViewProvider implements vscode.WebviewViewProvider {
         case 'bundle':
           void vscode.commands.executeCommand('hpcSync.projectManager');
           break;
+        case 'addMount':
+          void vscode.commands.executeCommand('hpcSync.addMount');
+          break;
         case 'copy':
           if (msg.text) {
             void vscode.env.clipboard.writeText(msg.text);
@@ -118,7 +121,7 @@ export class ProjectsViewProvider implements vscode.WebviewViewProvider {
             })),
           }
         : undefined,
-      quota: storage.map((f) => `${f.label} ${f.used} / ${f.quota}`).join(' · '),
+      quota: storage.map((f) => ({ label: f.label, used: f.used, total: f.quota, pct: f.usedPct })),
     });
   }
 
@@ -156,6 +159,14 @@ export class ProjectsViewProvider implements vscode.WebviewViewProvider {
   .acts { display: flex; gap: 5px; margin-top: 6px; flex-wrap: wrap; }
   .warn { color: var(--vscode-charts-orange, #d29922); }
   .foot { margin-top: 8px; border-top: 1px solid var(--vscode-widget-border, rgba(128,128,128,0.15)); padding-top: 6px; }
+  .qtitle { font-size: 0.78em; font-weight: 700; letter-spacing: 0.05em; color: var(--vscode-descriptionForeground); margin-bottom: 3px; }
+  .qrow { display: flex; gap: 8px; align-items: baseline; font-size: 0.9em; margin-top: 4px; }
+  .qlabel { flex: 1; color: var(--vscode-descriptionForeground); overflow-wrap: anywhere; }
+  .qval { white-space: nowrap; }
+  .qbar-track { height: 3px; border-radius: 2px; background: var(--vscode-editorWidget-border, rgba(128,128,128,0.25)); margin-top: 2px; }
+  .qbar { height: 3px; border-radius: 2px; background: #2ea043; }
+  .qbar.warn { background: #d29922; }
+  .qbar.crit { background: #f85149; }
 </style>
 </head>
 <body>
@@ -219,7 +230,10 @@ export class ProjectsViewProvider implements vscode.WebviewViewProvider {
         (p.mounts.length ? ' · ' + p.mounts.length + ' mount' + (p.mounts.length > 1 ? 's' : '') : '') + '</span></summary>';
       html += '<div class="pbody">';
       if (!p.hasManifest) {
-        html += '<div class="meta warn">no manifest — not synced by HPC Sync</div>';
+        html += '<div class="meta">no mount manifest — mounts unknown (synced by another tool, or declares none)</div>';
+      }
+      if (isCurrent && p.mounts.length === 0) {
+        html += '<div class="meta">no mounts declared — link a dataset folder with <a data-act="addMount">Add mount…</a></div>';
       }
       if (p.localEdits) {
         html += '<div class="meta warn">showing local mount edits — run Sync to publish them to the cluster</div>';
@@ -235,7 +249,9 @@ export class ProjectsViewProvider implements vscode.WebviewViewProvider {
       }
       html += '<div class="acts">';
       if (isCurrent) {
-        html += '<button data-act="sync">Sync</button><button class="secondary" data-act="launch">Launch</button><button class="secondary" data-act="bundle">Bundle…</button>';
+        html += '<button data-act="sync">Sync</button><button class="secondary" data-act="launch">Launch</button>' +
+          '<button class="secondary" data-act="addMount" title="Link an existing cluster directory (dataset, cache…) to this project">Add mount…</button>' +
+          '<button class="secondary" data-act="bundle">Bundle…</button>';
       } else {
         html += '<a data-copy="' + esc(p.remoteDir) + '">copy path</a>' +
           (p.sifSize ? ' · <a data-del="' + esc(p.name) + '">delete .sif</a>' : '');
@@ -243,10 +259,21 @@ export class ProjectsViewProvider implements vscode.WebviewViewProvider {
       html += '</div></div></details>';
     }
 
-    const sharedMounts = snap.mounts.filter(function (m) { return m.projects.length > 1; });
-    html += '<div class="foot meta">' + snap.mounts.length + ' mount path(s)' +
-      (sharedMounts.length ? ' · ' + sharedMounts.map(function (m) { return esc(m.names[0]) + ' ×' + m.projects.length; }).join(' · ') : '') + '</div>';
-    if (data.quota) { html += '<div class="meta">' + esc(data.quota) + '</div>'; }
+    if (snap.mounts.length > 0) {
+      const sharedMounts = snap.mounts.filter(function (m) { return m.projects.length > 1; });
+      html += '<div class="foot meta">' + snap.mounts.length + ' mount path(s)' +
+        (sharedMounts.length ? ' · ' + sharedMounts.map(function (m) { return esc(m.names[0]) + ' ×' + m.projects.length; }).join(' · ') : '') + '</div>';
+    }
+    if (data.quota && data.quota.length) {
+      html += '<div class="foot"><div class="qtitle">STORAGE QUOTAS</div>';
+      for (const q of data.quota) {
+        html += '<div class="qrow"><span class="qlabel">' + esc(q.label) + '</span><span class="qval">' + esc(q.used) + ' / ' + esc(q.total) + '</span></div>';
+        if (typeof q.pct === 'number') {
+          html += '<div class="qbar-track"><div class="qbar' + (q.pct >= 90 ? ' crit' : q.pct >= 70 ? ' warn' : '') + '" style="width:' + Math.min(100, q.pct) + '%"></div></div>';
+        }
+      }
+      html += '</div>';
+    }
     html += '<button class="wide secondary" id="btnAtlas">Open Project Atlas ⤢</button>';
 
     root.innerHTML = html;

@@ -4,6 +4,24 @@ All notable changes to this project are documented here. The format is loosely
 based on [Keep a Changelog](https://keepachangelog.com/), and the project
 follows semantic-ish versioning while pre-1.0.
 
+## [0.15.2]
+### Fixed
+- The current workspace no longer shows "no manifest — not synced by HPC
+  Sync": having no `.hpcproject.json` just means no mounts are declared
+  (normal for a fresh project). Foreign projects without a manifest now say
+  "mounts unknown" instead of claiming they weren't synced.
+- Storage quotas in the Projects view render as per-filesystem rows with
+  usage bars instead of one unreadable run-on line; the "0 mount path(s)"
+  line is hidden when there is nothing to count.
+### Added
+- "Add mount…" on the current project (Projects view) and the
+  `HPC Sync: Add Project Mount` command: link an existing cluster directory
+  (dataset folder, shared cache…) to the project as a named mount, with a
+  remote existence check. Uses the same `.hpcproject.json` + Dockerfile-ENV
+  path as the Project Manager — one data model, several entry points — so
+  the directory immediately appears in the Launch palette, Projects view and
+  Atlas graph.
+
 ## [0.15.1]
 ### Fixed
 - Paths now agree across surfaces: the Projects view and Atlas overlay the

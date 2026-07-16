@@ -105,9 +105,24 @@ const SNAPSHOT = {
 const { ProjectsViewProvider } = require(base + 'projectsView.js');
 const stubAtlas = { onDidUpdate: eventFn, getSnapshot: () => undefined, currentProjectName: () => 'nisar_test_extension' };
 const stubCluster = { onDidUpdate: eventFn, getSnapshot: () => ({ storage: [] }) };
+const QUOTA = [
+  { label: '/home (user dcarcien)', used: '35GB', total: '50GB', pct: 71 },
+  { label: '/scratch (user dcarcien)', used: '605MB', total: '20TB', pct: 0 },
+  { label: '/project (project rrg-dclausi)', used: '2906GB', total: '95TB', pct: 3 },
+  { label: '/nearline (project def-dclausi)', used: '221KB', total: '1000GB', pct: 0 },
+];
+// A snapshot like the user's real one: current project synced, no mounts yet.
+const SNAPSHOT_BARE = {
+  host: SNAPSHOT.host, scannedAt: SNAPSHOT.scannedAt, projectsParent: SNAPSHOT.projectsParent,
+  projects: [{ name: 'nisar_test_extension', remoteDir: '/home/dcarcien/projects/nisar_test_extension', hasManifest: true, sifSizeBytes: 577699840, sifSize: '551 MB', mounts: [] }],
+  mounts: [],
+};
 write('projectsView', new ProjectsViewProvider({ onStatusChanged: eventFn }, stubAtlas, stubCluster).html(), [
-  { type: 'state', status: 'connected', current: 'nisar_test_extension', snapshot: SNAPSHOT, quota: 'home 35 GB / 50 GB · scratch 605 MB / 20 TB' },
+  { type: 'state', status: 'connected', current: 'nisar_test_extension', snapshot: SNAPSHOT, quota: QUOTA },
 ], 'body clamped to 300px = sidebar width', 300);
+write('projectsView-bare', new ProjectsViewProvider({ onStatusChanged: eventFn }, stubAtlas, stubCluster).html(), [
+  { type: 'state', status: 'connected', current: 'nisar_test_extension', snapshot: SNAPSHOT_BARE, quota: QUOTA },
+], 'zero-mount project, like a fresh sync', 300);
 
 // ── Project Atlas panel ──
 const { AtlasPanel } = require(base + 'atlasPanel.js');

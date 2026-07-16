@@ -187,14 +187,18 @@ export class AtlasModel implements vscode.Disposable {
         projects.push({
           name: this.currentProjectName(),
           remoteDir: `${parent}/${this.currentProjectName()}`,
-          hasManifest: localMounts.length > 0,
+          hasManifest: true,
           mounts: localMounts,
           missingRemote: true,
         });
-      } else if (JSON.stringify(cur.mounts) !== JSON.stringify(localMounts)) {
-        cur.mounts = localMounts;
+      } else {
+        // The open workspace IS an HPC Sync project regardless of whether a
+        // manifest file exists (no mounts declared ⇒ no manifest — normal).
         cur.hasManifest = true;
-        cur.localEdits = true;
+        if (JSON.stringify(cur.mounts) !== JSON.stringify(localMounts)) {
+          cur.mounts = localMounts;
+          cur.localEdits = true;
+        }
       }
     }
 

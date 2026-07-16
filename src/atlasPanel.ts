@@ -185,7 +185,7 @@ export class AtlasPanel {
       d.setAttribute('data-node', 'P:' + p.name);
       d.innerHTML = '<div class="t">' + esc(p.name) + '</div><div class="s">' +
         (p.sifSizeBytes ? (p.sifSizeBytes / (1024 * 1024 * 1024)).toFixed(1) + ' GB .sif' : 'no .sif') +
-        (p.hasManifest ? '' : ' · not synced by HPC Sync') + '</div>';
+        (p.hasManifest ? '' : ' · mounts unknown') + '</div>';
       colP.appendChild(d);
     }
     for (const m of vis.mounts) {
@@ -288,7 +288,7 @@ export class AtlasPanel {
       if (p) {
         box.innerHTML = '<b>' + esc(p.name) + '</b> — ' + esc(p.remoteDir) +
           '<br>' + (p.mounts.length ? 'mounts: ' + esc(p.mounts.map(function (m) { return m.name; }).join(', ')) : 'no mounts') +
-          (p.hasManifest ? '' : '<br>⚠ no .hpcproject.json manifest on the cluster');
+          (p.hasManifest ? '' : '<br>no .hpcproject.json manifest — mounts unknown for this project');
       }
     }
   }

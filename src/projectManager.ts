@@ -42,6 +42,23 @@ async function maybeRebuildContainer(reason: string): Promise<void> {
   }
 }
 
+/**
+ * Add (or replace) a named project mount in .hpcproject.json and mirror it
+ * into the Dockerfile ENV block. Single code path for every UI that adds
+ * mounts (Project Manager panel, Projects view, command palette).
+ */
+export async function addProjectMount(name: string, dirPath: string, purpose?: string): Promise<void> {
+  const pc = loadProjectConfig();
+  pc.mounts = pc.mounts.filter((m) => m.name !== name);
+  pc.mounts.push({ name, path: dirPath.replace(/\/+$/, ''), purpose: purpose || undefined });
+  saveProjectConfig(pc);
+  log.appendLine(`[project] mount added: ${name} -> ${dirPath}`);
+  if (syncDockerfileMountEnv(getConfig().dockerfilePath, pc.mounts)) {
+    log.appendLine('[project] Dockerfile ENV block synced (excluded from rebuild detection)');
+    void maybeRebuildContainer('Mount ENV defaults were written to the Dockerfile');
+  }
+}
+
 interface Msg {
   command: string;
   name?: string;
@@ -164,15 +181,7 @@ export class ProjectManagerPanel {
         if (!msg.name?.trim() || !msg.path?.trim()) {
           break;
         }
-        const pc = loadProjectConfig();
-        pc.mounts = pc.mounts.filter((m) => m.name !== msg.name!.trim());
-        pc.mounts.push({ name: msg.name.trim(), path: msg.path.trim().replace(/\/+$/, ''), purpose: msg.purpose?.trim() || undefined });
-        saveProjectConfig(pc);
-        log.appendLine(`[project] mount added: ${msg.name} -> ${msg.path}`);
-        if (syncDockerfileMountEnv(cfg.dockerfilePath, pc.mounts)) {
-          log.appendLine('[project] Dockerfile ENV block synced (excluded from rebuild detection)');
-          void maybeRebuildContainer('Mount ENV defaults were written to the Dockerfile');
-        }
+        await addProjectMount(msg.name.trim(), msg.path.trim(), msg.purpose?.trim());
         await this.sendState();
         break;
       }
