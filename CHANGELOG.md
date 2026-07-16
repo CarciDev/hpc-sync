@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format is loosely
 based on [Keep a Changelog](https://keepachangelog.com/), and the project
 follows semantic-ish versioning while pre-1.0.
 
+## [0.14.1]
+### Added
+- Auto-detect the VS Code dev-container image (`vsc-<folder>-<hash>`) on the
+  rebuild path instead of requiring `hpcSync.dockerImageName` to be set by hand;
+  the detected value is saved to the project.
+
 ## [0.14.0]
 ### Added
 - Inline onboarding wizard in the Pipeline view: fill host, username, account,
