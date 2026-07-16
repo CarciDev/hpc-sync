@@ -451,7 +451,7 @@ export class SyncEngine implements vscode.Disposable {
 
   private async dockerImageSize(image: string): Promise<number> {
     try {
-      const out = await this.runLocal('docker', ['image', 'inspect', '--format', '{{.Size}}', image]);
+      const out = await this.runLocal(await this.resolveDockerBin(), ['image', 'inspect', '--format', '{{.Size}}', image]);
       return parseInt(out.trim(), 10) || 0;
     } catch {
       return 0;
@@ -467,7 +467,7 @@ export class SyncEngine implements vscode.Disposable {
   private async detectDockerImage(cfg: HpcConfig): Promise<string> {
     let out: string;
     try {
-      out = await this.runLocal('docker', ['images', '--format', '{{.Repository}}:{{.Tag}}']);
+      out = await this.runLocal(await this.resolveDockerBin(), ['images', '--format', '{{.Repository}}:{{.Tag}}']);
     } catch (e) {
       throw new Error(
         `Could not run "docker images" where the extension is running: ${(e as Error).message}. ` +
@@ -523,10 +523,47 @@ export class SyncEngine implements vscode.Disposable {
       }
     }, 500);
     try {
-      await this.runLocal('docker', ['save', image, '-o', outPath]);
+      await this.runLocal(await this.resolveDockerBin(), ['save', image, '-o', outPath]);
     } finally {
       clearInterval(poll);
     }
+  }
+
+  private dockerBin?: string;
+
+  /**
+   * Resolve a working docker CLI. Extension hosts often start with a trimmed
+   * PATH (especially inside dev containers, where the docker feature installs
+   * to /usr/local/bin), so try well-known locations before failing.
+   */
+  private async resolveDockerBin(): Promise<string> {
+    if (this.dockerBin) {
+      return this.dockerBin;
+    }
+    const candidates =
+      process.platform === 'win32'
+        ? ['docker', 'C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.exe']
+        : ['docker', '/usr/local/bin/docker', '/usr/bin/docker', '/usr/local/bin/docker-host'];
+    for (const c of candidates) {
+      const ok = await new Promise<boolean>((resolve) => {
+        const p = spawn(c, ['-v'], { windowsHide: true });
+        p.on('error', () => resolve(false));
+        p.on('close', (code) => resolve(code === 0));
+      });
+      if (ok) {
+        this.dockerBin = c;
+        if (c !== 'docker') {
+          log.appendLine(`[sync] docker CLI found at ${c} (not on the extension host PATH)`);
+        }
+        return c;
+      }
+    }
+    throw new Error(
+      `docker CLI not found. Tried: ${candidates.join(', ')}. ` +
+        'In a dev container, add the docker-outside-of-docker feature to devcontainer.json and rebuild; ' +
+        'verify with "docker images" in the terminal. Alternatively sync from a local VS Code window, ' +
+        'or run "HPC Sync: Mark Environment As Built" if the .sif on the cluster is already current.'
+    );
   }
 
   private runLocal(command: string, args: string[]): Promise<string> {
@@ -540,17 +577,9 @@ export class SyncEngine implements vscode.Disposable {
       child.stderr.on('data', (d: Buffer) => (stderr += d.toString()));
       child.on('error', (e) => {
         this.currentChild = undefined;
-        if ((e as NodeJS.ErrnoException).code === 'ENOENT' && command === 'docker') {
-          reject(
-            new Error(
-              'docker CLI not found where the extension is running (dev container?). ' +
-                'Options: run "HPC Sync: Mark Environment As Built" if the .sif on the cluster is already current, ' +
-                'add the docker-outside-of-docker feature to devcontainer.json, or sync from a local VS Code window.'
-            )
-          );
-        } else {
-          reject(new Error(`Failed to run ${command}: ${e.message}`));
-        }
+        // make the log honest: the "$ cmd" line above never actually executed
+        log.appendLine(`  (command did not start: ${e.message})`);
+        reject(new Error(`Failed to run ${command}: ${e.message}`));
       });
       child.on('close', (code) => {
         this.currentChild = undefined;
