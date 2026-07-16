@@ -192,7 +192,7 @@ export class AtlasPanel {
       const d = document.createElement('div');
       d.className = 'card mount';
       d.setAttribute('data-node', 'M:' + m.path);
-      d.innerHTML = '<div class="t">' + esc(m.names.join(' / ')) + '</div><div class="s">' + esc(m.path) +
+      d.innerHTML = '<div class="t">' + esc(m.names.join(' / ')) + '</div><div class="s">' + esc(m.display || m.path) +
         (m.purposes.length ? ' · ' + esc(m.purposes.join('; ')) : '') + '</div>';
       colM.appendChild(d);
     }
@@ -279,7 +279,7 @@ export class AtlasPanel {
     if (nodeId.slice(0, 2) === 'M:') {
       const m = data.snapshot.mounts.find(function (x) { return 'M:' + x.path === nodeId; });
       if (m) {
-        box.innerHTML = '<b>' + esc(m.names.join(' / ')) + '</b> — ' + esc(m.path) +
+        box.innerHTML = '<b>' + esc(m.names.join(' / ')) + '</b> — ' + esc(m.display || m.path) +
           '<br>used by: ' + esc(m.projects.join(', ')) +
           (m.purposes.length ? '<br>' + esc(m.purposes.join('; ')) : '');
       }

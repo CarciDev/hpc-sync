@@ -4,6 +4,22 @@ All notable changes to this project are documented here. The format is loosely
 based on [Keep a Changelog](https://keepachangelog.com/), and the project
 follows semantic-ish versioning while pre-1.0.
 
+## [0.15.1]
+### Fixed
+- Paths now agree across surfaces: the Projects view and Atlas overlay the
+  current workspace's LIVE `.hpcproject.json` over the (possibly stale) synced
+  copy — badged "local mount edits — run Sync to publish" when they differ,
+  and "not on the cluster yet" when the project was never synced. Mount cards
+  show the path as declared (`~/…`, `$SCRATCH/…`); expansion is only used
+  internally for merging. Editing `.hpcproject.json` rescans automatically.
+- Launch panel: the storage palette is now a horizontal strip above the flow,
+  so the INPUTS → WORKSPACE → RESULTS columns get the full panel width — no
+  more cropped RESULTS column next to a tall palette with dead space below.
+### Added
+- `scripts/preview-webviews.js`: renders the webviews with realistic sample
+  data into `preview/*.html` (theme variables + vscode API stubbed) so layout
+  changes can be checked in a browser before packaging.
+
 ## [0.15.0]
 ### Added
 - **Projects view** (sidebar): inventory of every project on the cluster —

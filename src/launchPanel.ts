@@ -337,11 +337,13 @@ export class LaunchPanel {
   .actions { margin-top: 16px; display: flex; gap: 10px; align-items: center; }
   #status { margin-top: 10px; color: var(--vscode-descriptionForeground); }
   .hidden { display: none !important; }
-  /* ── pipeline builder ── */
-  .builder { display: flex; gap: 14px; align-items: flex-start; }
-  .palette { width: 205px; flex-shrink: 0; border: 1px solid var(--vscode-widget-border, rgba(128,128,128,0.3)); border-radius: 6px; padding: 8px; }
-  .palette .ptitle { font-size: 0.85em; font-weight: 600; color: var(--vscode-descriptionForeground); margin-bottom: 6px; }
-  .pitem { border: 1px solid var(--vscode-widget-border, rgba(128,128,128,0.3)); border-radius: 5px; padding: 6px 8px; margin-bottom: 6px; cursor: grab; background: var(--vscode-editor-background); }
+  /* ── pipeline builder ──
+     palette is a horizontal strip on top; the flow gets the full width below
+     (a tall left palette next to a wide flow cropped RESULTS off-screen) */
+  .builder { display: flex; flex-direction: column; gap: 10px; }
+  .palette { border: 1px solid var(--vscode-widget-border, rgba(128,128,128,0.3)); border-radius: 6px; padding: 7px 8px; display: flex; flex-wrap: wrap; gap: 6px; align-items: stretch; }
+  .palette .ptitle { font-size: 0.85em; font-weight: 600; color: var(--vscode-descriptionForeground); width: 100%; }
+  .pitem { border: 1px solid var(--vscode-widget-border, rgba(128,128,128,0.3)); border-radius: 5px; padding: 6px 8px; width: 190px; box-sizing: border-box; cursor: grab; background: var(--vscode-editor-background); }
   .pitem:active { cursor: grabbing; }
   .pitem b { font-size: 0.92em; }
   .pitem .fine { color: var(--vscode-descriptionForeground); font-size: 0.8em; margin-top: 1px; }
@@ -353,9 +355,9 @@ export class LaunchPanel {
   .bar.crit { background: #f85149; }
   /* left→right flow: three labeled slot columns joined by captioned arrows —
      the same node-card grammar as the Project Atlas */
-  .flow { flex: 1; min-width: 0; display: flex; flex-direction: row; align-items: stretch; overflow-x: auto; padding-bottom: 4px; }
-  .fcol { flex: 1; min-width: 190px; }
-  .farrow { width: 100px; flex-shrink: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 0 6px; }
+  .flow { min-width: 0; display: flex; flex-direction: row; align-items: stretch; overflow-x: auto; padding-bottom: 4px; }
+  .fcol { flex: 1; min-width: 180px; }
+  .farrow { width: 86px; flex-shrink: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 0 5px; }
   .farrow .arr { font-size: 1.7em; line-height: 1; color: var(--vscode-descriptionForeground); }
   .farrow .acap { font-size: 0.75em; color: var(--vscode-descriptionForeground); text-align: center; }
   .slot { border: 1.5px dashed var(--vscode-widget-border, rgba(128,128,128,0.45)); border-radius: 8px; padding: 8px 10px; margin: 0; box-sizing: border-box; }

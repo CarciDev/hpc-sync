@@ -104,13 +104,19 @@ export function activate(context: vscode.ExtensionContext): void {
     })
   );
 
-  // Refresh the Project paths widget when .hpcproject.json changes.
+  // Refresh the Project paths widget and the atlas overlay when
+  // .hpcproject.json changes — the Projects view must always agree with the
+  // local manifest for the current workspace.
   const projWatcher = vscode.workspace.createFileSystemWatcher('**/.hpcproject.json');
+  const onManifestChange = () => {
+    clusterView.postState();
+    void atlas.refresh();
+  };
   context.subscriptions.push(
     projWatcher,
-    projWatcher.onDidChange(() => clusterView.postState()),
-    projWatcher.onDidCreate(() => clusterView.postState()),
-    projWatcher.onDidDelete(() => clusterView.postState())
+    projWatcher.onDidChange(onManifestChange),
+    projWatcher.onDidCreate(onManifestChange),
+    projWatcher.onDidDelete(onManifestChange)
   );
 
   // ── Status bar: connection + live job counts ──

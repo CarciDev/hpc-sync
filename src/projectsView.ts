@@ -143,11 +143,12 @@ export class ProjectsViewProvider implements vscode.WebviewViewProvider {
   button.wide { width: 100%; margin-top: 8px; }
   details.proj { border: 1px solid var(--vscode-widget-border, rgba(128,128,128,0.2)); border-radius: 6px; margin-bottom: 6px; background: var(--vscode-editorWidget-background); }
   details.proj[open] { padding-bottom: 6px; }
-  details.proj > summary { list-style: none; cursor: pointer; padding: 6px 9px; display: flex; align-items: baseline; gap: 7px; }
+  details.proj > summary { list-style: none; cursor: pointer; padding: 6px 9px; display: flex; align-items: baseline; gap: 4px 7px; flex-wrap: wrap; }
   details.proj > summary::-webkit-details-marker { display: none; }
-  .pname { font-weight: 600; overflow-wrap: anywhere; }
+  .pname { font-weight: 600; overflow-wrap: anywhere; min-width: 0; }
   .pname .you { color: var(--vscode-textLink-foreground); font-weight: 400; font-size: 0.85em; }
-  .psub { flex: 1; text-align: right; }
+  .psub { flex: 1; text-align: right; white-space: nowrap; }
+  .pbody .meta, .pbody .warn { overflow-wrap: anywhere; }
   .pbody { padding: 0 9px; }
   .mrow { padding: 3px 0; border-top: 1px solid var(--vscode-widget-border, rgba(128,128,128,0.08)); font-size: 0.92em; }
   .mpath { font-family: var(--vscode-editor-font-family, monospace); font-size: 0.86em; color: var(--vscode-descriptionForeground); overflow-wrap: anywhere; }
@@ -219,6 +220,12 @@ export class ProjectsViewProvider implements vscode.WebviewViewProvider {
       html += '<div class="pbody">';
       if (!p.hasManifest) {
         html += '<div class="meta warn">no manifest — not synced by HPC Sync</div>';
+      }
+      if (p.localEdits) {
+        html += '<div class="meta warn">showing local mount edits — run Sync to publish them to the cluster</div>';
+      }
+      if (p.missingRemote) {
+        html += '<div class="meta warn">not on the cluster yet — run Sync to create it</div>';
       }
       for (const m of p.mounts) {
         const others = sharedWith(m.path, p.name);

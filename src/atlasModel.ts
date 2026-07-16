@@ -2,7 +2,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { getConfig, shq } from './config';
 import { log } from './log';
-import { ProjectMount } from './projectConfig';
+import { loadProjectConfig, ProjectMount } from './projectConfig';
 import { SshManager } from './sshManager';
 
 /** One project directory found on the cluster. */
@@ -13,12 +13,18 @@ export interface AtlasProject {
   hasManifest: boolean;
   mounts: ProjectMount[];
   sifSizeBytes?: number;
+  /** current workspace only: local .hpcproject.json differs from the synced copy */
+  localEdits?: boolean;
+  /** current workspace only: project directory not found on the cluster yet */
+  missingRemote?: boolean;
 }
 
 /** One shared directory, merged across projects by normalized path. */
 export interface AtlasMountNode {
-  /** normalized absolute-ish path — the merge key */
+  /** normalized absolute-ish path — the merge key (internal) */
   path: string;
+  /** the path as first declared (~/…, $SCRATCH/… kept) — what UIs show */
+  display: string;
   /** every name projects gave this path (usually one) */
   names: string[];
   purposes: string[];
@@ -170,6 +176,28 @@ export class AtlasModel implements vscode.Disposable {
       }
     }
 
+    // The current workspace is the authority on ITS OWN mounts: overlay the
+    // live local .hpcproject.json over the (possibly stale) synced copy, so
+    // this view always agrees with the Cluster paths widget and the Launch
+    // palette, which read the local file.
+    if (cfg.localProjectDir) {
+      const localMounts = loadProjectConfig().mounts;
+      const cur = projects.find((p) => p.name === this.currentProjectName());
+      if (!cur) {
+        projects.push({
+          name: this.currentProjectName(),
+          remoteDir: `${parent}/${this.currentProjectName()}`,
+          hasManifest: localMounts.length > 0,
+          mounts: localMounts,
+          missingRemote: true,
+        });
+      } else if (JSON.stringify(cur.mounts) !== JSON.stringify(localMounts)) {
+        cur.mounts = localMounts;
+        cur.hasManifest = true;
+        cur.localEdits = true;
+      }
+    }
+
     // Merge mounts across projects by normalized path.
     const byPath = new Map<string, AtlasMountNode>();
     for (const proj of projects) {
@@ -177,7 +205,7 @@ export class AtlasModel implements vscode.Disposable {
         const key = normalize(m.path);
         let node = byPath.get(key);
         if (!node) {
-          node = { path: key, names: [], purposes: [], projects: [] };
+          node = { path: key, display: m.path.trim().replace(/\/+$/, ''), names: [], purposes: [], projects: [] };
           byPath.set(key, node);
         }
         if (!node.names.includes(m.name)) {
