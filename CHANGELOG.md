@@ -4,6 +4,14 @@ All notable changes to this project are documented here. The format is loosely
 based on [Keep a Changelog](https://keepachangelog.com/), and the project
 follows semantic-ish versioning while pre-1.0.
 
+## [0.15.4]
+### Changed
+- Project mounts are INPUTS by default in the Launch panel: declaring a mount
+  means "this project's jobs consume that data", so every launch now stages
+  it to node-local NVMe ($INPUT_DIR) without a manual drag — remove the chip
+  (or trim its paths) for a run that doesn't need the data. A declared mount
+  is never silently invisible to a job again.
+
 ## [0.15.3]
 ### Fixed
 - **SSH keys now survive dev-container rebuilds.** A rebuild recreates the

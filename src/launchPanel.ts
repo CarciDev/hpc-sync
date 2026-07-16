@@ -525,6 +525,19 @@ export class LaunchPanel {
     pipe.results.push({ uid: ++uid, storId: 'project', path: proj ? proj.base : '' });
     el('quickOut').value = proj ? proj.base : '';
 
+    // Project mounts are INPUTS by default — declaring a mount means "this
+    // project's jobs consume that data", so every launch stages it to
+    // node-local NVMe without a manual drag. Remove the chip (or trim the
+    // paths on it) for a run that doesn't need the data.
+    for (const p of init.palette) {
+      if (p.bind && p.base) {
+        pipe.inputs.push({ uid: ++uid, storId: p.id, paths: p.base });
+      }
+    }
+    if (pipe.inputs.length && !pipe.workspace) {
+      pipe.workspace = { uid: ++uid, storId: 'tmpdir' };
+    }
+
     renderPalette();
     renderPipeline();
 
