@@ -345,24 +345,18 @@ export class SyncEngine implements vscode.Disposable {
 
   private async slowPath(cfg: HpcConfig, envHash: string, dryRun: boolean): Promise<void> {
     if (!cfg.dockerImageName) {
-      // Auto-detect the VS Code dev-container image instead of making the user
-      // paste it. It is named vsc-<folder>-<hash>.
+      // Auto-detect the VS Code dev-container image (vsc-<folder>-<hash>)
+      // instead of making the user paste it. detectDockerImage throws with the
+      // real reason (docker error vs no images) rather than a generic message.
       const detected = await this.detectDockerImage(cfg);
-      if (!detected) {
-        throw new Error(
-          'No dev-container image found to export. Build/reopen the project in its dev container ' +
-            '(so a "vsc-…" image exists), ensure a docker CLI is available where the extension runs, ' +
-            'or set hpcSync.dockerImageName manually (run "docker images").'
-        );
-      }
       cfg.dockerImageName = detected;
-      log.appendLine(`[sync] auto-detected dev-container image: ${detected}`);
+      log.appendLine(`[sync] using dev-container image: ${detected}`);
       // remember it for this project so detection only happens once
       void vscode.workspace
         .getConfiguration('hpcSync')
         .update('dockerImageName', detected, vscode.ConfigurationTarget.Workspace)
         .then(undefined, () => {
-          /* no workspace to write to (single file) — fine, detected per run */
+          /* no workspace to write to — fine, detected per run */
         });
     }
     const home = await this.ssh.getHomeDir();
@@ -465,38 +459,54 @@ export class SyncEngine implements vscode.Disposable {
   }
 
   /**
-   * Find the VS Code dev-container image for this workspace. VS Code names it
-   * `vsc-<folder>-<hash>`; `docker images` lists newest first. Returns the best
-   * match, prompting only when several dev-container images are ambiguous.
+   * Find the VS Code dev-container image for this workspace (`vsc-<folder>-<hash>`).
+   * `docker images` lists newest first. Throws with a specific reason on any
+   * failure so the user is never told "no image" when the real problem is a
+   * docker/daemon error or an unexpected image name.
    */
-  private async detectDockerImage(cfg: HpcConfig): Promise<string | undefined> {
+  private async detectDockerImage(cfg: HpcConfig): Promise<string> {
     let out: string;
     try {
       out = await this.runLocal('docker', ['images', '--format', '{{.Repository}}:{{.Tag}}']);
-    } catch {
-      return undefined; // no docker CLI where the extension runs
+    } catch (e) {
+      throw new Error(
+        `Could not run "docker images" where the extension is running: ${(e as Error).message}. ` +
+          'In a dev container this needs the docker-outside-of-docker feature and access to the Docker ' +
+          'socket; verify with "docker images" in the terminal.'
+      );
     }
     const names = out
       .split('\n')
       .map((l) => l.trim())
-      .filter((n) => n.startsWith('vsc-') && !n.endsWith(':<none>'));
+      .filter((n) => n && n !== '<none>:<none>' && !n.endsWith(':<none>'));
+    const vsc = names.filter((n) => n.startsWith('vsc-'));
+    log.appendLine(
+      `[sync] docker returned ${names.length} tagged image(s); dev-container (vsc-*): [${vsc.join(', ') || 'none'}]`
+    );
     if (names.length === 0) {
-      return undefined;
+      throw new Error(
+        '"docker images" succeeded but returned no usable images. Build or reopen the project in its ' +
+          'dev container so its image exists, then retry (the Docker daemon reachable here may differ ' +
+          'from the one that built the container).'
+      );
     }
     const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
     const target = 'vsc' + norm(path.basename(cfg.localProjectDir || 'project'));
-    const matches = names.filter((n) => norm(n).includes(target));
-    const pool = matches.length > 0 ? matches : names;
+    const exact = vsc.filter((n) => norm(n).includes(target));
+    // Prefer an exact folder match, then any dev-container image, then anything.
+    const pool = exact.length ? exact : vsc.length ? vsc : names;
     if (pool.length === 1) {
       return pool[0];
     }
-    // docker lists newest first; offer a choice but default to the newest match.
     const pick = await vscode.window.showQuickPick(pool, {
-      title: 'HPC Sync — select the dev-container image to export',
-      placeHolder: 'newest is listed first',
+      title: 'HPC Sync — select the image to export as the .sif',
+      placeHolder: 'dev-container images (vsc-…) first; newest first',
       ignoreFocusOut: true,
     });
-    return pick ?? undefined;
+    if (!pick) {
+      throw new Error('No image selected — set hpcSync.dockerImageName or retry.');
+    }
+    return pick;
   }
 
   private async dockerSave(
