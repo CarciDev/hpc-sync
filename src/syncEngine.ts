@@ -82,6 +82,49 @@ function fmtDuration(sec: number): string {
   return `${Math.floor(m / 60)}h ${m % 60}m`;
 }
 
+/**
+ * Double-quote a value for POSIX shell keeping `$VAR` expansion alive —
+ * Dockerfile ENV values like `PATH=/opt/bin:$PATH` must still expand when
+ * replayed as `export` lines in %post / %environment.
+ */
+function dqKeepVars(s: string): string {
+  return '"' + s.replace(/(["`\\])/g, '\\$1') + '"';
+}
+
+/** Parse `ENV k=v k2="v 2"` (and the legacy `ENV key value`) into pairs. */
+function parseEnvPairs(rest: string): Array<[string, string]> {
+  const first = rest.split(/\s+/)[0];
+  if (!first.includes('=')) {
+    const sp = rest.indexOf(' ');
+    if (sp < 0) {
+      return [[rest, '']];
+    }
+    return [[rest.slice(0, sp), rest.slice(sp + 1).trim().replace(/^"(.*)"$/, '$1')]];
+  }
+  const pairs: Array<[string, string]> = [];
+  const re = /([\w][\w.-]*)=("(?:[^"\\]|\\.)*"|'[^']*'|\S*)/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(rest))) {
+    let v = m[2];
+    if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
+      v = v.slice(1, -1);
+      if (m[2].startsWith('"')) {
+        v = v.replace(/\\(.)/g, '$1');
+      }
+    }
+    pairs.push([m[1], v]);
+  }
+  return pairs;
+}
+
+interface DockerfileTranslation {
+  baseImage: string;
+  /** Full Apptainer definition file content. */
+  defFile: string;
+  /** COPY/ADD sources to upload into the remote build dir before building. */
+  uploads: Array<{ local: string; remoteRel: string; isDir: boolean }>;
+}
+
 /** Rolling-window transfer speed / ETA estimator. */
 class TransferMeter {
   private samples: Array<{ t: number; b: number }> = [];
@@ -344,21 +387,6 @@ export class SyncEngine implements vscode.Disposable {
   // ───────────────────────────── SLOW PATH ─────────────────────────────
 
   private async slowPath(cfg: HpcConfig, envHash: string, dryRun: boolean): Promise<void> {
-    if (!cfg.dockerImageName) {
-      // Auto-detect the VS Code dev-container image (vsc-<folder>-<hash>)
-      // instead of making the user paste it. detectDockerImage throws with the
-      // real reason (docker error vs no images) rather than a generic message.
-      const detected = await this.detectDockerImage(cfg);
-      cfg.dockerImageName = detected;
-      log.appendLine(`[sync] using dev-container image: ${detected}`);
-      // remember it for this project so detection only happens once
-      void vscode.workspace
-        .getConfiguration('hpcSync')
-        .update('dockerImageName', detected, vscode.ConfigurationTarget.Workspace)
-        .then(undefined, () => {
-          /* no workspace to write to — fine, detected per run */
-        });
-    }
     const home = await this.ssh.getHomeDir();
     const remoteTar = `${home}/${cfg.tarName}`;
     const sifDir = await this.ssh.expandRemotePath(cfg.remoteSifDir);
@@ -372,6 +400,39 @@ export class SyncEngine implements vscode.Disposable {
       this.skipStep('export', 'Export Docker image', 'tar already uploaded in a previous run');
       this.skipStep('upload', 'Upload image tar', 'tar already on HPC');
     } else {
+      // The export path needs a docker CLI where the extension host runs.
+      // Inside a dev container there usually is none — instead of failing,
+      // rebuild the environment on the cluster from the Dockerfile itself.
+      let dockerErr: Error | undefined;
+      try {
+        await this.resolveDockerBin();
+      } catch (e) {
+        dockerErr = e as Error;
+      }
+      if (dockerErr) {
+        log.appendLine(
+          '[sync] docker CLI not found where the extension runs — falling back to a remote Apptainer build from the Dockerfile.'
+        );
+        await this.buildSifRemotely(cfg, envHash, dryRun, sifDir, sifPath, dockerErr);
+        return;
+      }
+
+      if (!cfg.dockerImageName) {
+        // Auto-detect the VS Code dev-container image (vsc-<folder>-<hash>)
+        // instead of making the user paste it. detectDockerImage throws with the
+        // real reason (docker error vs no images) rather than a generic message.
+        const detected = await this.detectDockerImage(cfg);
+        cfg.dockerImageName = detected;
+        log.appendLine(`[sync] using dev-container image: ${detected}`);
+        // remember it for this project so detection only happens once
+        void vscode.workspace
+          .getConfiguration('hpcSync')
+          .update('dockerImageName', detected, vscode.ConfigurationTarget.Workspace)
+          .then(undefined, () => {
+            /* no workspace to write to — fine, detected per run */
+          });
+      }
+
       const localTar = path.join(os.tmpdir(), cfg.tarName);
 
       await this.step('export', `Export Docker image ${cfg.dockerImageName}`, async (s) => {
@@ -446,6 +507,310 @@ export class SyncEngine implements vscode.Disposable {
       fs.writeFileSync(cfg.stateFile, envHash);
       fs.rmSync(cfg.tarStateFile, { force: true });
       s.detail = `built ${sifPath}`;
+    });
+  }
+
+  /**
+   * Translate a simple Dockerfile (FROM / RUN / COPY / ADD / ENV / ARG /
+   * WORKDIR, plus runtime-only instructions that are safely ignored) into an
+   * Apptainer definition, so the .sif can be built on the cluster when no
+   * docker CLI exists where the extension runs. Throws naming the offending
+   * instruction when the Dockerfile is beyond this subset (multi-stage
+   * builds, COPY --from, wildcards, ADD from URL, …).
+   */
+  private translateDockerfile(cfg: HpcConfig): DockerfileTranslation {
+    const dfPath = cfg.dockerfilePath;
+    if (!dfPath || !fs.existsSync(dfPath)) {
+      throw new Error(`no Dockerfile found at ${dfPath || '(hpcSync.dockerfilePath not set)'}`);
+    }
+    // NOTE: the managed mount-ENV block is intentionally kept — those ENV
+    // lines matter at runtime; only the environment *hash* strips them.
+    const raw = fs.readFileSync(dfPath, 'utf8');
+
+    // Fold line continuations and drop comment lines.
+    const logical: string[] = [];
+    let pending = '';
+    for (const line of raw.split(/\r?\n/)) {
+      if (/^\s*#/.test(line)) {
+        continue;
+      }
+      const joined = pending + line;
+      if (/\\\s*$/.test(joined)) {
+        pending = joined.replace(/\\\s*$/, ' ');
+        continue;
+      }
+      pending = '';
+      if (joined.trim()) {
+        logical.push(joined.trim());
+      }
+    }
+
+    const parseJsonArray = (s: string): string[] | undefined => {
+      if (!s.startsWith('[')) {
+        return undefined;
+      }
+      try {
+        const a = JSON.parse(s);
+        return Array.isArray(a) ? a.map(String) : undefined;
+      } catch {
+        return undefined;
+      }
+    };
+
+    let baseImage = '';
+    let workdir = '/'; // relative COPY dests resolve against the current WORKDIR
+    const post: string[] = [];
+    const envLines: string[] = [];
+    const filesLines: string[] = [];
+    const uploads: DockerfileTranslation['uploads'] = [];
+    const ignored: string[] = [];
+    // COPY sources resolve against the build context. devcontainer.json
+    // usually sets context to the project root; also try the Dockerfile's own
+    // directory so both layouts work.
+    const ctxRoots = [cfg.localProjectDir, path.dirname(dfPath)].filter(Boolean);
+
+    for (const line of logical) {
+      const m = /^([A-Za-z]+)\s+([\s\S]+)$/.exec(line);
+      if (!m) {
+        throw new Error(`unparseable Dockerfile line: "${line}"`);
+      }
+      const instr = m[1].toUpperCase();
+      let rest = m[2].trim();
+      switch (instr) {
+        case 'FROM': {
+          if (baseImage) {
+            throw new Error('multi-stage Dockerfiles (multiple FROM) are not supported');
+          }
+          rest = rest.replace(/--platform=\S+\s+/i, '');
+          baseImage = rest.split(/\s+/)[0];
+          break;
+        }
+        case 'RUN': {
+          const arr = parseJsonArray(rest);
+          post.push(arr ? arr.map(shq).join(' ') : rest);
+          break;
+        }
+        case 'COPY':
+        case 'ADD': {
+          let parts = parseJsonArray(rest) ?? rest.split(/\s+/);
+          const flags = parts.filter((p) => p.startsWith('--'));
+          parts = parts.filter((p) => !p.startsWith('--'));
+          if (flags.some((f) => f.startsWith('--from'))) {
+            throw new Error(`${instr} --from (multi-stage copy) is not supported`);
+          }
+          if (parts.length < 2) {
+            throw new Error(`cannot parse: "${line}"`);
+          }
+          const rawDest = parts[parts.length - 1];
+          // Docker: dest is a directory when it ends with "/", is ".", or when
+          // there are multiple sources. Resolve to an absolute path and emit
+          // explicit file paths — %files runs BEFORE %post, so a dest
+          // directory created by WORKDIR/RUN does not exist yet at copy time.
+          const destIsDir =
+            rawDest === '.' || rawDest.endsWith('/') || rawDest.endsWith('/.') || parts.length > 2;
+          const destAbs =
+            (rawDest.startsWith('/') ? path.posix.normalize(rawDest) : path.posix.join(workdir, rawDest)).replace(/\/+$/, '') || '/';
+          for (const src of parts.slice(0, -1)) {
+            if (/^[a-z][a-z0-9+.-]*:\/\//i.test(src)) {
+              throw new Error(`${instr} from a URL is not supported ("${line}")`);
+            }
+            if (/[*?[\]]/.test(src)) {
+              throw new Error(`wildcards in ${instr} are not supported ("${line}")`);
+            }
+            const abs = ctxRoots.map((r) => path.resolve(r, src)).find((p) => fs.existsSync(p));
+            if (!abs) {
+              throw new Error(`${instr} source "${src}" not found under ${ctxRoots.join(' or ')}`);
+            }
+            // Each source gets its own staging dir so basenames never collide
+            // and a trailing-slash dest keeps the original file name.
+            const stage = `ctx/${uploads.length}`;
+            if (fs.statSync(abs).isDirectory()) {
+              // Docker copies a directory's CONTENTS into dest (the directory
+              // itself is not copied) — mirror that with one line per entry.
+              uploads.push({ local: abs, remoteRel: stage, isDir: true });
+              for (const entry of fs.readdirSync(abs)) {
+                if (entry === '.git' || entry === '.devcontainer') {
+                  continue; // never shipped (same exclusions as the file sync)
+                }
+                filesLines.push(`    ${stage}/${entry} ${path.posix.join(destAbs, entry)}`);
+              }
+            } else {
+              const remoteRel = `${stage}/${path.basename(abs)}`;
+              uploads.push({ local: abs, remoteRel, isDir: false });
+              filesLines.push(
+                `    ${remoteRel} ${destIsDir ? path.posix.join(destAbs, path.basename(abs)) : destAbs}`
+              );
+            }
+          }
+          break;
+        }
+        case 'ENV': {
+          for (const [k, v] of parseEnvPairs(rest)) {
+            const exp = `export ${k}=${dqKeepVars(v)}`;
+            post.push(exp); // later RUN lines must see it, like docker build
+            envLines.push(`    ${exp}`);
+          }
+          break;
+        }
+        case 'ARG': {
+          const eq = rest.indexOf('=');
+          if (eq > 0) {
+            // build-time default; no --build-arg overrides exist here
+            post.push(`export ${rest.slice(0, eq).trim()}=${dqKeepVars(rest.slice(eq + 1).trim().replace(/^"(.*)"$/, '$1'))}`);
+          }
+          break;
+        }
+        case 'WORKDIR':
+          workdir = rest.startsWith('/') ? rest : path.posix.join(workdir, rest);
+          post.push(`mkdir -p ${shq(workdir)} && cd ${shq(workdir)}`);
+          break;
+        // Runtime-only metadata — the sync runs an explicit `python …` via
+        // apptainer exec, so dropping these does not change behaviour.
+        case 'USER':
+        case 'LABEL':
+        case 'EXPOSE':
+        case 'VOLUME':
+        case 'CMD':
+        case 'ENTRYPOINT':
+        case 'STOPSIGNAL':
+        case 'HEALTHCHECK':
+        case 'MAINTAINER':
+        case 'ONBUILD':
+          ignored.push(instr);
+          break;
+        default:
+          throw new Error(`Dockerfile instruction ${instr} is not supported`);
+      }
+    }
+    if (!baseImage) {
+      throw new Error(`${dfPath} has no FROM line`);
+    }
+    if (ignored.length) {
+      log.appendLine(`[sync] runtime-only Dockerfile instructions ignored for the .sif: ${ignored.join(', ')}`);
+    }
+
+    const defFile = [
+      'Bootstrap: docker',
+      `From: ${baseImage}`,
+      '',
+      ...(filesLines.length ? ['%files', ...filesLines, ''] : []),
+      ...(envLines.length ? ['%environment', ...envLines, ''] : []),
+      '%post',
+      '    set -e',
+      ...post.map((l) => `    ${l}`),
+      '',
+    ].join('\n');
+    return { baseImage, defFile, uploads };
+  }
+
+  /**
+   * Fallback slow path when no docker CLI is available where the extension
+   * runs (typical inside a dev container): translate the Dockerfile to an
+   * Apptainer definition, upload it with its COPY sources, and build the .sif
+   * directly on the cluster over the existing SSH session.
+   */
+  private async buildSifRemotely(
+    cfg: HpcConfig,
+    envHash: string,
+    dryRun: boolean,
+    sifDir: string,
+    sifPath: string,
+    dockerErr: Error
+  ): Promise<void> {
+    let t: DockerfileTranslation;
+    try {
+      t = this.translateDockerfile(cfg);
+    } catch (e) {
+      // Neither path works — report both reasons plus the original guidance.
+      throw new Error(
+        `${dockerErr.message} A remote Apptainer build from the Dockerfile is not possible either: ${(e as Error).message}.`
+      );
+    }
+
+    const home = await this.ssh.getHomeDir();
+    const wsName = path.basename(cfg.localProjectDir) || 'project';
+    const buildDir = `${home}/.hpcsync_build/${wsName}`;
+    const defPath = `${buildDir}/environment.def`;
+
+    await this.step('translate', 'Translate Dockerfile to Apptainer definition', async (s) => {
+      log.appendLine(`[sync] generated ${defPath}:\n${t.defFile}`);
+      s.detail = `base image ${t.baseImage}, ${t.uploads.length} COPY source(s)`;
+    });
+
+    await this.step('upload', `Upload build context to ${cfg.host}`, async (s) => {
+      if (dryRun) {
+        s.status = 'done';
+        s.detail = `[dry-run] would upload definition + ${t.uploads.length} COPY source(s) to ${buildDir}`;
+        return;
+      }
+      // Pre-create every remote directory in one round trip, then upload.
+      const plan: Array<{ local: string; remote: string }> = [];
+      const dirs = new Set<string>([`${buildDir}/ctx`]);
+      for (const u of t.uploads) {
+        if (u.isDir) {
+          const { files, skippedDirs } = this.collectLocalFiles(u.local);
+          for (const d of skippedDirs) {
+            log.appendLine(`  ⚠ unreadable, NOT uploaded for the build: ${d}`);
+          }
+          // Create top-level entry dirs even when their contents are all
+          // ignored, so no %files line points at a missing path.
+          for (const e of fs.readdirSync(u.local, { withFileTypes: true })) {
+            if (e.isDirectory() && e.name !== '.git' && e.name !== '.devcontainer') {
+              dirs.add(`${buildDir}/${u.remoteRel}/${e.name}`);
+            }
+          }
+          for (const f of files) {
+            const remote = `${buildDir}/${u.remoteRel}/${f.rel}`;
+            dirs.add(path.posix.dirname(remote));
+            plan.push({ local: f.abs, remote });
+          }
+        } else {
+          dirs.add(path.posix.dirname(`${buildDir}/${u.remoteRel}`));
+          plan.push({ local: u.local, remote: `${buildDir}/${u.remoteRel}` });
+        }
+      }
+      await this.ssh.execChecked(`mkdir -p ${Array.from(dirs).map(shq).join(' ')}`);
+      await this.ssh.writeRemoteFile(defPath, t.defFile, 0o644);
+      let count = 0;
+      for (const p of plan) {
+        this.throwIfCancelled();
+        await this.ssh.uploadFile(p.local, p.remote);
+        count++;
+        s.detail = `${count}/${plan.length} file(s) uploaded`;
+        this.fire();
+      }
+      s.detail = `definition + ${count} file(s) → ${buildDir}`;
+    });
+
+    await this.step('build', 'Build .sif with Apptainer on HPC (remote build)', async (s) => {
+      const build = (extra: string) =>
+        `cd ${shq(buildDir)} && apptainer build --force${extra} ${shq(sifPath)} ${shq(defPath)}`;
+      const cmd =
+        `${cfg.apptainerLoad} && mkdir -p ${shq(sifDir)} && ` +
+        // keep the layer/pull cache off the small home quota when possible
+        `if [ -n "$SCRATCH" ]; then export APPTAINER_CACHEDIR="$SCRATCH/.apptainer_cache"; fi && ` +
+        // some clusters need --fakeroot for %post, others don't support it —
+        // try the plain unprivileged build first, then retry with --fakeroot
+        `{ ${build('')} || ${build(' --fakeroot')}; }`;
+      if (dryRun) {
+        s.status = 'done';
+        s.detail = `[dry-run] ssh: ${cmd}`;
+        return;
+      }
+      let lastLine = '';
+      const onData = (chunk: string) => {
+        log.append(chunk);
+        const lines = chunk.split('\n').map((l) => l.trim()).filter(Boolean);
+        if (lines.length) {
+          lastLine = lines[lines.length - 1];
+          s.detail = lastLine.length > 90 ? lastLine.slice(0, 90) + '…' : lastLine;
+          this.fire();
+        }
+      };
+      await this.ssh.execChecked(cmd, { onStdout: onData, onStderr: onData });
+      fs.writeFileSync(cfg.stateFile, envHash);
+      fs.rmSync(cfg.tarStateFile, { force: true });
+      s.detail = `built ${sifPath} on the cluster — no local docker needed`;
     });
   }
 

@@ -4,6 +4,19 @@ All notable changes to this project are documented here. The format is loosely
 based on [Keep a Changelog](https://keepachangelog.com/), and the project
 follows semantic-ish versioning while pre-1.0.
 
+## [0.14.4]
+### Fixed
+- Syncing from inside a dev container without a docker CLI no longer dead-ends
+  on the rebuild path. When no docker CLI is reachable, the Dockerfile is
+  translated to an Apptainer definition (FROM / RUN / COPY / ADD / ENV / ARG /
+  WORKDIR; runtime-only instructions are ignored), the definition and its COPY
+  sources are uploaded, and the .sif is built directly on the cluster over the
+  existing SSH session. Dockerfiles beyond that subset still get the previous
+  guidance (docker-outside-of-docker feature, local window, or Mark Env As
+  Built).
+- The docker CLI is no longer required when the image tar from a previous run
+  is already on the cluster — only the export step needs it.
+
 ## [0.14.1]
 ### Added
 - Auto-detect the VS Code dev-container image (`vsc-<folder>-<hash>`) on the
