@@ -82,11 +82,16 @@ export class LaunchPanel {
       }
     });
     this.panel.webview.html = this.html();
-    this.panel.webview.onDidReceiveMessage((msg: LaunchConfigMsg | { command: string }) => {
+    this.panel.webview.onDidReceiveMessage((msg: LaunchConfigMsg | { command: string; mounts?: string[] }) => {
       if (msg.command === 'ready') {
         void this.sendInit();
       } else if (msg.command === 'launch') {
         void this.launch(msg as LaunchConfigMsg);
+      } else if (msg.command === 'atlas') {
+        void vscode.commands.executeCommand('hpcSync.projectAtlas', {
+          label: `Launch · ${path.basename(this.scriptRel)}`,
+          mountPaths: (msg as { mounts?: string[] }).mounts ?? [],
+        });
       }
     });
   }
@@ -291,7 +296,11 @@ export class LaunchPanel {
       }
     }
     void this.panel.webview.postMessage({ type: 'status', text: `Submitting ${name}… (see pipeline view)` });
-    await this.engine.sync({ submitGenerated: { name, content: msg.content } });
+    // Mount paths bound by this run, straight from the script that will be
+    // submitted (works even if the user edited it) — recorded per job so the
+    // Project Atlas can show a run's relations later.
+    const mounts = Array.from(msg.content.matchAll(/--env HPC_MOUNT_\w+="([^"]+)"/g), (m) => m[1]);
+    await this.engine.sync({ submitGenerated: { name, content: msg.content, mounts } });
   }
 
   private html(): string {
@@ -342,26 +351,26 @@ export class LaunchPanel {
   .bar { height: 3px; border-radius: 2px; background: #2ea043; }
   .bar.warn { background: #d29922; }
   .bar.crit { background: #f85149; }
-  .flow { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; }
-  .node { text-align: center; color: var(--vscode-descriptionForeground); font-size: 0.82em; letter-spacing: 0.06em; text-transform: uppercase; }
-  .bigarrow { width: 0; height: 0; margin: 3px 0; border-left: 15px solid transparent; border-right: 15px solid transparent; border-top: 15px solid var(--vscode-descriptionForeground); opacity: 0.55; }
-  .funnel { width: 86%; height: 30px; background: var(--vscode-widget-border, rgba(128,128,128,0.28)); opacity: 0.55; clip-path: polygon(4% 0, 96% 0, 62% 100%, 38% 100%); }
-  .pipe { width: 13%; height: 26px; background: var(--vscode-widget-border, rgba(128,128,128,0.28)); opacity: 0.55; }
-  .pipe.short { height: 16px; }
-  .hoplbl { color: var(--vscode-descriptionForeground); font-size: 0.8em; text-align: center; margin: 2px 0 3px; max-width: 90%; }
+  /* left→right flow: three labeled slot columns joined by captioned arrows —
+     the same node-card grammar as the Project Atlas */
+  .flow { flex: 1; min-width: 0; display: flex; flex-direction: row; align-items: stretch; overflow-x: auto; padding-bottom: 4px; }
+  .fcol { flex: 1; min-width: 190px; }
+  .farrow { width: 100px; flex-shrink: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 0 6px; }
+  .farrow .arr { font-size: 1.7em; line-height: 1; color: var(--vscode-descriptionForeground); }
+  .farrow .acap { font-size: 0.75em; color: var(--vscode-descriptionForeground); text-align: center; }
   .slot { border: 1.5px dashed var(--vscode-widget-border, rgba(128,128,128,0.45)); border-radius: 8px; padding: 8px 10px; margin: 0; box-sizing: border-box; }
-  .slot-inputs { width: 100%; background: rgba(88,166,255,0.045); }
-  .slot-ws { width: 76%; border-style: solid; border-width: 2px; background: var(--vscode-editorWidget-background); }
-  .slot-res { width: 58%; min-width: 260px; background: rgba(46,160,67,0.05); }
+  .slot-inputs { background: rgba(88,166,255,0.045); }
+  .slot-ws { border-style: solid; border-width: 2px; background: var(--vscode-editorWidget-background); }
+  .slot-res { background: rgba(46,160,67,0.05); }
   .slot.dragok { border-color: var(--vscode-focusBorder); background: rgba(88,166,255,0.06); }
-  .slot .shead { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; }
-  .slot .stitle { font-size: 0.84em; font-weight: 700; letter-spacing: 0.05em; color: var(--vscode-descriptionForeground); }
-  .slot .shint { font-size: 0.8em; color: var(--vscode-descriptionForeground); flex: 1; }
+  .slot .shead { display: flex; align-items: center; gap: 8px; margin-bottom: 2px; }
+  .slot .stitle { font-size: 0.84em; font-weight: 700; letter-spacing: 0.05em; color: var(--vscode-descriptionForeground); flex: 1; }
+  .slot .shint { font-size: 0.8em; color: var(--vscode-descriptionForeground); margin-bottom: 4px; min-height: 1.1em; }
   .addbtn { font-size: 0.82em; padding: 1px 8px; border-radius: 9px; border: 1px dashed var(--vscode-descriptionForeground); color: var(--vscode-descriptionForeground); cursor: pointer; background: none; }
   .addbtn:hover { color: var(--vscode-foreground); border-color: var(--vscode-foreground); background: none; }
   .addmenu { margin: 4px 0; display: flex; flex-wrap: wrap; gap: 4px; }
   .addmenu button { font-size: 0.82em; padding: 2px 9px; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); }
-  .chip { border: 1px solid var(--vscode-widget-border, rgba(128,128,128,0.35)); border-radius: 6px; padding: 6px 8px; margin: 5px 0; background: var(--vscode-editor-background); }
+  .chip { border: 1.5px solid var(--vscode-widget-border, rgba(128,128,128,0.35)); border-radius: 8px; padding: 6px 9px; margin: 5px 0; background: var(--vscode-editorWidget-background); }
   .chip .chead { display: flex; align-items: center; gap: 7px; }
   .chip .chead b { font-size: 0.92em; }
   .chip .fine { color: var(--vscode-descriptionForeground); font-size: 0.8em; }
@@ -411,34 +420,31 @@ export class LaunchPanel {
   </div>
 
   <div id="pipeWrap">
-    <h3>Data pipeline</h3>
-    <div class="meta" style="margin-bottom:6px">Drag storages from the palette into a slot, or use “+ add”. Slot types keep the flow valid: only $SLURM_TMPDIR can be a workspace, and it can never be a destination.</div>
+    <h3>Data pipeline <a id="lnkAtlas" style="font-size:0.75em;font-weight:400">view relations ⤢</a></h3>
+    <div class="meta" style="margin-bottom:6px">Data flows left to right: sources are staged in, the job computes in the workspace, results are delivered to the destinations. Drag storages from the palette into a column, or use “+ add” — column types keep the flow valid: only $SLURM_TMPDIR can be a workspace, and it can never be a destination.</div>
     <div class="builder">
       <div class="palette" id="palette"><div class="ptitle">STORAGES</div></div>
       <div class="flow">
-        <div class="node">start</div>
-        <div class="bigarrow"></div>
-        <div class="slot slot-inputs" data-role="inputs">
-          <div class="shead"><span class="stitle">INPUTS</span><span class="shint" id="hintInputs"></span><button class="addbtn" data-add="inputs">+ add source</button></div>
+        <div class="slot fcol slot-inputs" data-role="inputs">
+          <div class="shead"><span class="stitle">INPUTS</span><button class="addbtn" data-add="inputs">+ add source</button></div>
+          <div class="shint" id="hintInputs"></div>
           <div class="addmenu hidden" id="menu-inputs"></div>
           <div id="chips-inputs"></div>
         </div>
-        <div class="funnel"></div>
-        <div class="hoplbl" id="hopInText"></div>
-        <div class="slot slot-ws" data-role="workspace">
-          <div class="shead"><span class="stitle">WORKSPACE</span><span class="shint" id="hintWs"></span><button class="addbtn" data-add="workspace">+ add</button></div>
+        <div class="farrow"><div class="arr">⟶</div><div class="acap" id="hopInText"></div></div>
+        <div class="slot fcol slot-ws" data-role="workspace">
+          <div class="shead"><span class="stitle">WORKSPACE</span><button class="addbtn" data-add="workspace">+ add</button></div>
+          <div class="shint" id="hintWs"></div>
           <div class="addmenu hidden" id="menu-workspace"></div>
           <div id="chips-workspace"></div>
         </div>
-        <div class="pipe"></div>
-        <div class="hoplbl" id="hopRunText"></div>
-        <div class="slot slot-res" data-role="results">
-          <div class="shead"><span class="stitle">RESULTS</span><span class="shint" id="hintRes"></span><button class="addbtn" data-add="results">+ add destination</button></div>
+        <div class="farrow"><div class="arr">⟶</div><div class="acap" id="hopRunText"></div></div>
+        <div class="slot fcol slot-res" data-role="results">
+          <div class="shead"><span class="stitle">RESULTS</span><button class="addbtn" data-add="results">+ add destination</button></div>
+          <div class="shint" id="hintRes"></div>
           <div class="addmenu hidden" id="menu-results"></div>
           <div id="chips-results"></div>
         </div>
-        <div class="pipe short"></div>
-        <div class="node">end</div>
       </div>
     </div>
   </div>
@@ -533,6 +539,15 @@ export class LaunchPanel {
     el('trackDiff').addEventListener('change', regen);
     el('account').addEventListener('change', regen);
     el('go').onclick = go;
+    el('lnkAtlas').onclick = function () {
+      // mounts used by the current pipeline (dedup by path)
+      const paths = [];
+      pipe.inputs.concat(pipe.results).forEach(function (c) {
+        const p = stor(c.storId);
+        if (p && p.bind && p.base && paths.indexOf(p.base) < 0) { paths.push(p.base); }
+      });
+      vscode.postMessage({ command: 'atlas', mounts: paths });
+    };
     document.querySelectorAll('.addbtn').forEach(function (b) {
       b.onclick = function () { toggleAddMenu(b.getAttribute('data-add')); };
     });

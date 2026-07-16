@@ -83,3 +83,9 @@ check('jobSummaryPanel', () => JobSummaryPanel.prototype.html.call(Object.create
 const { ProjectManagerPanel } = require(base + 'projectManager.js');
 check('projectManager', () => ProjectManagerPanel.prototype.html.call(Object.create(ProjectManagerPanel.prototype)));
 
+const { ProjectsViewProvider } = require(base + 'projectsView.js');
+check('projectsView', () => new ProjectsViewProvider(stubSsh, { onDidUpdate: eventFn, getSnapshot: () => undefined, currentProjectName: () => 'p' }, { onDidUpdate: eventFn, getSnapshot: () => ({ storage: [] }) }).html());
+
+const { AtlasPanel } = require(base + 'atlasPanel.js');
+check('atlasPanel', () => AtlasPanel.prototype.html.call(Object.create(AtlasPanel.prototype)));
+

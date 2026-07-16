@@ -4,6 +4,29 @@ All notable changes to this project are documented here. The format is loosely
 based on [Keep a Changelog](https://keepachangelog.com/), and the project
 follows semantic-ish versioning while pre-1.0.
 
+## [0.15.0]
+### Added
+- **Projects view** (sidebar): inventory of every project on the cluster —
+  manifest mounts, .sif size, and which mounts are shared with which other
+  projects. Built from ONE batched SSH scan (directory listing +
+  `.hpcproject.json` manifests + `ls -l` on the .sif inventory); no `du`
+  sweeps. Cached per host; rescans on connect, after sync/submit, or manually.
+- **Project Atlas** (editor panel): bipartite projects ↔ mounts graph with
+  hover/pin highlighting and a job-scoped mode that shows only a run's
+  project, its bound mounts, and 1-hop neighbouring projects (hidden-node
+  count always displayed). Entry points: Projects view, "view relations" in
+  the Launch panel, and a Relations button on active jobs.
+- Jobs submitted via the Launch panel record their bound mount paths, so the
+  Atlas can show a run's relations later.
+### Changed
+- The sidebar "Pipeline" view is now called **"Sync"** (same view id) — it
+  shows sync progress and was colliding in name with the Launch panel's data
+  pipeline.
+- The Launch panel's data pipeline is now a left→right flow (INPUTS →
+  WORKSPACE → RESULTS columns with captioned arrows) using the same node-card
+  look as the Atlas, replacing the stacked funnel/pipe rendering. Slot typing,
+  drag-and-drop, and the generated sbatch script are unchanged.
+
 ## [0.14.5]
 ### Fixed
 - Remote fallback build: COPY destinations under `/tmp`, `/var/tmp` or `$HOME`

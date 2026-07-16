@@ -70,6 +70,9 @@ export class JobsViewProvider implements vscode.WebviewViewProvider {
         case 'cancelJob':
           void vscode.commands.executeCommand('hpcSync.cancelJob', msg.id);
           break;
+        case 'atlas':
+          void vscode.commands.executeCommand('hpcSync.projectAtlas', { jobId: msg.id });
+          break;
       }
     });
     webviewView.onDidChangeVisibility(() => {
@@ -287,6 +290,7 @@ export class JobsViewProvider implements vscode.WebviewViewProvider {
       html += '<div class="row-actions">' +
         '<button data-act="details">Details</button>' +
         '<button data-act="output">Console</button>' +
+        '<button data-act="atlas" title="Mount relations for this run (Project Atlas)">Relations</button>' +
         '<button data-act="cancelJob" class="danger">Cancel</button>' +
         '</div></div>';
     }

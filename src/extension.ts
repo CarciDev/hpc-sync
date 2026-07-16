@@ -1,6 +1,8 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { UsageAnalytics } from './analytics';
+import { AtlasModel } from './atlasModel';
+import { AtlasPanel, AtlasScope } from './atlasPanel';
 import { ClusterMonitor } from './clusterMonitor';
 import { ClusterViewProvider } from './clusterView';
 import { getConfig, shq } from './config';
@@ -12,6 +14,7 @@ import { LaunchPanel } from './launchPanel';
 import { log } from './log';
 import { PipelineViewProvider } from './pipelineView';
 import { ProjectManagerPanel } from './projectManager';
+import { ProjectsViewProvider } from './projectsView';
 import { setupCommand } from './setup';
 import { discoverKeys, publicKeyText } from './sshKeys';
 import { SshManager } from './sshManager';
@@ -38,16 +41,43 @@ export function activate(context: vscode.ExtensionContext): void {
     }
     void context.globalState.update(outputsKey(), arr);
   };
-  const engine = new SyncEngine(ssh, () => void monitor.refreshNow(), recordJobOutput);
+  const atlas = new AtlasModel(ssh, context.globalState);
+  const engine = new SyncEngine(
+    ssh,
+    () => {
+      void monitor.refreshNow();
+      void atlas.refresh();
+    },
+    recordJobOutput,
+    (jobId, mountPaths) =>
+      void atlas
+        .normalizePaths(mountPaths)
+        .then((np) => atlas.recordJobMounts(jobId, atlas.currentProjectName(), np))
+  );
   const pipelineView = new PipelineViewProvider(ssh, engine);
   const jobsView = new JobsViewProvider(ssh, monitor, context.globalState);
   const clusterView = new ClusterViewProvider(ssh, cluster, analytics, bench, context.globalState);
+  const projectsView = new ProjectsViewProvider(ssh, atlas, cluster);
 
-  // Refresh the (cached) submission pattern in the background once connected.
+  // Refresh the (cached) submission pattern and the project atlas in the
+  // background once connected.
   context.subscriptions.push(
     ssh.onStatusChanged((s) => {
       if (s === 'connected') {
         void analytics.ensure(false);
+        void atlas.refresh();
+      }
+    })
+  );
+
+  // Rescan the atlas when a sync finishes successfully (manifests/sifs may
+  // have changed) — edge-triggered so it fires once per run, not per step.
+  let lastSyncFinish = 0;
+  context.subscriptions.push(
+    engine.onDidChange((s) => {
+      if (!s.active && !s.error && s.finishedAt && s.finishedAt !== lastSyncFinish) {
+        lastSyncFinish = s.finishedAt;
+        void atlas.refresh();
       }
     })
   );
@@ -59,7 +89,11 @@ export function activate(context: vscode.ExtensionContext): void {
     analytics,
     bench,
     engine,
+    atlas,
     vscode.window.registerWebviewViewProvider(PipelineViewProvider.viewId, pipelineView, {
+      webviewOptions: { retainContextWhenHidden: true },
+    }),
+    vscode.window.registerWebviewViewProvider(ProjectsViewProvider.viewId, projectsView, {
       webviewOptions: { retainContextWhenHidden: true },
     }),
     vscode.window.registerWebviewViewProvider(JobsViewProvider.viewId, jobsView, {
@@ -294,6 +328,38 @@ export function activate(context: vscode.ExtensionContext): void {
 
   register('hpcSync.refreshJobs', () => void monitor.refreshNow());
   register('hpcSync.refreshCluster', () => void cluster.refreshNow());
+  register('hpcSync.refreshProjects', async () => {
+    if (ssh.status !== 'connected') {
+      await ssh.ensureConnected();
+    }
+    await atlas.refresh();
+  });
+  register(
+    'hpcSync.projectAtlas',
+    async (arg?: { jobId?: string; label?: string; project?: string; mountPaths?: string[] }) => {
+      let scope: AtlasScope | undefined;
+      if (arg?.jobId) {
+        const rec = atlas.getJobMounts(arg.jobId);
+        if (rec) {
+          scope = { label: `Job ${arg.jobId} · ${rec.project}`, project: rec.project, mountPaths: rec.mountPaths };
+        } else {
+          void vscode.window.showInformationMessage(
+            `HPC Sync: no mount record for job ${arg.jobId} — it was submitted before the Atlas existed, or not via the Launch panel. Showing all relations.`
+          );
+        }
+      } else if (arg?.mountPaths) {
+        scope = {
+          label: arg.label ?? 'This run',
+          project: arg.project ?? atlas.currentProjectName(),
+          mountPaths: await atlas.normalizePaths(arg.mountPaths),
+        };
+      }
+      AtlasPanel.show(atlas, scope);
+      if (!atlas.getSnapshot()) {
+        void atlas.refresh();
+      }
+    }
+  );
   register('hpcSync.rebuildUsagePattern', () => void analytics.ensure(true));
   register('hpcSync.benchmarkStorage', () => void bench.run());
 

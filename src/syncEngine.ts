@@ -41,7 +41,7 @@ export interface SyncOptions {
   /** Workspace-relative path of an sbatch script to submit after syncing. */
   submitScript?: string;
   /** A generated sbatch script (from the Launch panel) to upload and submit. */
-  submitGenerated?: { name: string; content: string };
+  submitGenerated?: { name: string; content: string; mounts?: string[] };
 }
 
 interface LocalFile {
@@ -194,7 +194,8 @@ export class SyncEngine implements vscode.Disposable {
   constructor(
     private readonly ssh: SshManager,
     private readonly onJobSubmitted?: (jobId: string) => void,
-    private readonly recordJobOutput?: (jobId: string, outPath: string) => void
+    private readonly recordJobOutput?: (jobId: string, outPath: string) => void,
+    private readonly recordJobMounts?: (jobId: string, mountPaths: string[]) => void
   ) {}
 
   getState(): SyncState {
@@ -1299,7 +1300,7 @@ export class SyncEngine implements vscode.Disposable {
 
   private async submitGeneratedJob(
     cfg: HpcConfig,
-    gen: { name: string; content: string },
+    gen: { name: string; content: string; mounts?: string[] },
     dryRun: boolean
   ): Promise<void> {
     await this.step('sbatch', `Submit generated job: ${gen.name}`, async (s) => {
@@ -1411,6 +1412,9 @@ export class SyncEngine implements vscode.Disposable {
         const outSpec = /^#SBATCH --output=(.+)$/m.exec(content)?.[1]?.trim();
         if (outSpec) {
           this.recordJobOutput?.(jobId, outSpec.replace(/%[jA]/g, jobId));
+        }
+        if (gen.mounts?.length) {
+          this.recordJobMounts?.(jobId, gen.mounts);
         }
         this.onJobSubmitted?.(jobId);
         void vscode.window.showInformationMessage(`HPC Sync: submitted Slurm job ${jobId} (${gen.name})`);
