@@ -4,6 +4,18 @@ All notable changes to this project are documented here. The format is loosely
 based on [Keep a Changelog](https://keepachangelog.com/), and the project
 follows semantic-ish versioning while pre-1.0.
 
+## [0.14.5]
+### Fixed
+- Remote fallback build: COPY destinations under `/tmp`, `/var/tmp` or `$HOME`
+  were invisible during `%post` because Apptainer bind-mounts those paths over
+  the image while building (the 0.14.4 build failed with "Could not open
+  requirements file"). COPY sources are now staged under `/.hpcsync_ctx` and
+  replayed inside `%post` at their original Dockerfile position, which also
+  preserves docker's COPY/RUN ordering.
+- Remote fallback build: `--fakeroot` is retried only when the first attempt
+  failed to set up user namespaces/fakeroot — a genuine build-script error no
+  longer triggers a pointless second full build.
+
 ## [0.14.4]
 ### Fixed
 - Syncing from inside a dev container without a docker CLI no longer dead-ends

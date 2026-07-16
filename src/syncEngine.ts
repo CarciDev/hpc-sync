@@ -623,6 +623,11 @@ export class SyncEngine implements vscode.Disposable {
             }
             // Each source gets its own staging dir so basenames never collide
             // and a trailing-slash dest keeps the original file name.
+            // %files runs BEFORE %post and Apptainer shadows /tmp, /var/tmp
+            // and $HOME with binds during %post, so never %files straight to
+            // the Dockerfile dest: stage under /.hpcsync_ctx (never shadowed)
+            // and replay the copy inside %post at its original position —
+            // which also preserves docker's COPY/RUN ordering.
             const stage = `ctx/${uploads.length}`;
             if (fs.statSync(abs).isDirectory()) {
               // Docker copies a directory's CONTENTS into dest (the directory
@@ -632,13 +637,23 @@ export class SyncEngine implements vscode.Disposable {
                 if (entry === '.git' || entry === '.devcontainer') {
                   continue; // never shipped (same exclusions as the file sync)
                 }
-                filesLines.push(`    ${stage}/${entry} ${path.posix.join(destAbs, entry)}`);
+                const staged = `/.hpcsync_ctx/${stage}/${entry}`;
+                const entryDest = path.posix.join(destAbs, entry);
+                filesLines.push(`    ${stage}/${entry} ${staged}`);
+                post.push(
+                  fs.statSync(path.join(abs, entry)).isDirectory()
+                    ? `mkdir -p ${shq(entryDest)} && cp -a ${shq(`${staged}/.`)} ${shq(entryDest)}`
+                    : `mkdir -p ${shq(path.posix.dirname(entryDest))} && cp -a ${shq(staged)} ${shq(entryDest)}`
+                );
               }
             } else {
               const remoteRel = `${stage}/${path.basename(abs)}`;
               uploads.push({ local: abs, remoteRel, isDir: false });
-              filesLines.push(
-                `    ${remoteRel} ${destIsDir ? path.posix.join(destAbs, path.basename(abs)) : destAbs}`
+              const staged = `/.hpcsync_ctx/${remoteRel}`;
+              const fileDest = destIsDir ? path.posix.join(destAbs, path.basename(abs)) : destAbs;
+              filesLines.push(`    ${remoteRel} ${staged}`);
+              post.push(
+                `mkdir -p ${shq(path.posix.dirname(fileDest))} && cp -a ${shq(staged)} ${shq(fileDest)}`
               );
             }
           }
@@ -698,6 +713,7 @@ export class SyncEngine implements vscode.Disposable {
       '%post',
       '    set -e',
       ...post.map((l) => `    ${l}`),
+      ...(filesLines.length ? ['    rm -rf /.hpcsync_ctx'] : []),
       '',
     ].join('\n');
     return { baseImage, defFile, uploads };
@@ -783,31 +799,42 @@ export class SyncEngine implements vscode.Disposable {
     });
 
     await this.step('build', 'Build .sif with Apptainer on HPC (remote build)', async (s) => {
-      const build = (extra: string) =>
-        `cd ${shq(buildDir)} && apptainer build --force${extra} ${shq(sifPath)} ${shq(defPath)}`;
-      const cmd =
+      const buildCmd = (extra: string) =>
         `${cfg.apptainerLoad} && mkdir -p ${shq(sifDir)} && ` +
         // keep the layer/pull cache off the small home quota when possible
         `if [ -n "$SCRATCH" ]; then export APPTAINER_CACHEDIR="$SCRATCH/.apptainer_cache"; fi && ` +
-        // some clusters need --fakeroot for %post, others don't support it —
-        // try the plain unprivileged build first, then retry with --fakeroot
-        `{ ${build('')} || ${build(' --fakeroot')}; }`;
+        `cd ${shq(buildDir)} && apptainer build --force${extra} ${shq(sifPath)} ${shq(defPath)}`;
       if (dryRun) {
         s.status = 'done';
-        s.detail = `[dry-run] ssh: ${cmd}`;
+        s.detail = `[dry-run] ssh: ${buildCmd('')}`;
         return;
       }
-      let lastLine = '';
+      let output = '';
       const onData = (chunk: string) => {
+        output += chunk;
         log.append(chunk);
         const lines = chunk.split('\n').map((l) => l.trim()).filter(Boolean);
         if (lines.length) {
-          lastLine = lines[lines.length - 1];
+          const lastLine = lines[lines.length - 1];
           s.detail = lastLine.length > 90 ? lastLine.slice(0, 90) + '…' : lastLine;
           this.fire();
         }
       };
-      await this.ssh.execChecked(cmd, { onStdout: onData, onStderr: onData });
+      try {
+        await this.ssh.execChecked(buildCmd(''), { onStdout: onData, onStderr: onData });
+      } catch (e) {
+        // Retry with --fakeroot only when the failure is a namespace/fakeroot
+        // SETUP problem — a genuine %post script error would just fail twice.
+        const setupFailure =
+          /failed to (create|set ?up).*(user )?namespace|user namespaces? (are )?(not|dis)/i.test(output) ||
+          /no (subuid|subgid)|newuidmap|newgidmap|fakeroot (binary|command) not (found|available)/i.test(output);
+        if (!setupFailure) {
+          throw e;
+        }
+        log.appendLine('\n[sync] unprivileged build could not start — retrying with --fakeroot ...');
+        output = '';
+        await this.ssh.execChecked(buildCmd(' --fakeroot'), { onStdout: onData, onStderr: onData });
+      }
       fs.writeFileSync(cfg.stateFile, envHash);
       fs.rmSync(cfg.tarStateFile, { force: true });
       s.detail = `built ${sifPath} on the cluster — no local docker needed`;
