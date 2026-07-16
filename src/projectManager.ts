@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { getConfig, shq } from './config';
+import { backupKeyNow } from './keyBackup';
 import { log } from './log';
 import {
   BUILTIN_TEMPLATES,
@@ -29,15 +30,19 @@ async function maybeRebuildContainer(reason: string): Promise<void> {
   }
   if (mode === 'always') {
     log.appendLine(`[project] ${reason} — auto-rebuilding the dev container`);
+    // A rebuild wipes the container filesystem, including any SSH key in
+    // ~/.ssh — snapshot it to client-side secrets so activation restores it.
+    await backupKeyNow();
     void vscode.commands.executeCommand('remote-containers.rebuildContainer');
     return;
   }
   const pick = await vscode.window.showInformationMessage(
-    `${reason}. Rebuild the dev container now to apply it? (This restarts the container and reloads the window.)`,
+    `${reason}. Rebuild the dev container now to apply it? (This restarts the container and reloads the window; your SSH key is backed up and restored automatically.)`,
     'Rebuild now',
     'Later'
   );
   if (pick === 'Rebuild now') {
+    await backupKeyNow();
     void vscode.commands.executeCommand('remote-containers.rebuildContainer');
   }
 }
@@ -83,14 +88,21 @@ interface Msg {
 export class ProjectManagerPanel {
   private static current?: ProjectManagerPanel;
 
-  static show(ssh: SshManager, engine: SyncEngine, memento: vscode.Memento): void {
-    if (ProjectManagerPanel.current) {
+  static show(ssh: SshManager, engine: SyncEngine, memento: vscode.Memento, focus?: 'mounts'): void {
+    if (!ProjectManagerPanel.current) {
+      ProjectManagerPanel.current = new ProjectManagerPanel(ssh, engine, memento);
+    } else {
       ProjectManagerPanel.current.panel.reveal(undefined, true);
       void ProjectManagerPanel.current.sendState();
-      return;
     }
-    ProjectManagerPanel.current = new ProjectManagerPanel(ssh, engine, memento);
+    if (focus) {
+      ProjectManagerPanel.current.pendingFocus = focus;
+      void ProjectManagerPanel.current.panel.webview.postMessage({ type: 'focus', target: focus });
+    }
   }
+
+  /** replayed after the webview posts 'ready' so a fresh panel can honor it */
+  private pendingFocus?: 'mounts';
 
   private readonly panel: vscode.WebviewPanel;
 
@@ -125,6 +137,10 @@ export class ProjectManagerPanel {
       case 'ready':
       case 'refresh':
         await this.sendState();
+        if (msg.command === 'ready' && this.pendingFocus) {
+          void this.panel.webview.postMessage({ type: 'focus', target: this.pendingFocus });
+          this.pendingFocus = undefined;
+        }
         break;
       case 'scaffold':
         await this.scaffold(msg.name ?? '', msg.overwrite === true);
@@ -593,7 +609,7 @@ export class ProjectManagerPanel {
     </div>
   </div>
 
-  <h3>Project mounts (shared directories this project uses)</h3>
+  <h3 id="secMounts">Project mounts (shared directories this project uses)</h3>
   <div class="meta" style="margin-bottom:6px">
     Mounts are named cluster directories — a datasets project, a shared cache — stored in <b>.hpcproject.json</b>
     (versionable, standard paths for the whole team). They appear as storages in the Launch panel's pipeline and are
@@ -638,7 +654,13 @@ export class ProjectManagerPanel {
 
   window.addEventListener('message', function (e) {
     const m = e.data;
-    if (m.type === 'state') { state = m; render(); }
+    if (m.type === 'focus' && m.target === 'mounts') {
+      const sec = document.getElementById('secMounts');
+      if (sec) { sec.scrollIntoView({ behavior: 'smooth' }); }
+      const nm = document.getElementById('mName');
+      if (nm) { nm.focus(); }
+    }
+    else if (m.type === 'state') { state = m; render(); }
     else if (m.type === 'editTemplate') {
       el('tplEditor').classList.remove('hidden');
       el('tplName').value = m.name;

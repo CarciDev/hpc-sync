@@ -10,10 +10,11 @@ import { JobOutputPanel } from './jobOutputPanel';
 import { JobSummaryPanel } from './jobSummaryPanel';
 import { JobsMonitor } from './jobsMonitor';
 import { JobsViewProvider } from './jobsView';
+import { backupKeyNow, initKeyBackup, restoreKeyIfMissing } from './keyBackup';
 import { LaunchPanel } from './launchPanel';
 import { log } from './log';
 import { PipelineViewProvider } from './pipelineView';
-import { addProjectMount, ProjectManagerPanel } from './projectManager';
+import { ProjectManagerPanel } from './projectManager';
 import { ProjectsViewProvider } from './projectsView';
 import { setupCommand } from './setup';
 import { discoverKeys, publicKeyText } from './sshKeys';
@@ -22,6 +23,11 @@ import { StorageBench } from './storageBench';
 import { SyncEngine } from './syncEngine';
 
 export function activate(context: vscode.ExtensionContext): void {
+  // SecretStorage lives on the CLIENT, so an SSH key backed up there
+  // survives dev-container rebuilds; restore it if the rebuild wiped ~/.ssh.
+  initKeyBackup(context.secrets);
+  const keyRestored = restoreKeyIfMissing();
+
   const ssh = new SshManager(getConfig, context.globalState);
   const monitor = new JobsMonitor(ssh);
   const cluster = new ClusterMonitor(ssh);
@@ -66,9 +72,18 @@ export function activate(context: vscode.ExtensionContext): void {
       if (s === 'connected') {
         void analytics.ensure(false);
         void atlas.refresh();
+        // The key that just worked is worth keeping — snapshot it so any
+        // future container rebuild can restore it.
+        void backupKeyNow();
       }
     })
   );
+  // Refresh the setup wizard once a restored key is on disk.
+  void keyRestored.then((restored) => {
+    if (restored) {
+      pipelineView.postState();
+    }
+  });
 
   // Rescan the atlas when a sync finishes successfully (manifests/sifs may
   // have changed) — edge-triggered so it fires once per run, not per step.
@@ -340,68 +355,15 @@ export function activate(context: vscode.ExtensionContext): void {
     }
     await atlas.refresh();
   });
-  // Link an existing cluster directory (dataset, shared cache…) to this
-  // project as a named mount. Same .hpcproject.json + Dockerfile-ENV path as
-  // the Project Manager — one data model, several entry points.
-  register('hpcSync.addMount', async () => {
-    const cfg = getConfig();
-    if (!cfg.localProjectDir) {
+  // Link a cluster directory to this project: opens the Project Manager
+  // scrolled to its mounts section + two-pane Cluster explorer (browse the
+  // cluster, then "use as mount path") — one mount UI, several entry points.
+  register('hpcSync.addMount', () => {
+    if (!getConfig().localProjectDir) {
       void vscode.window.showErrorMessage('HPC Sync: open the project folder as a workspace first.');
       return;
     }
-    const name = await vscode.window.showInputBox({
-      title: 'Add project mount (1/3) — name',
-      prompt: 'Short name for this directory. Jobs see it as the env var HPC_MOUNT_<NAME>.',
-      placeHolder: 'e.g. landsat_cache',
-      ignoreFocusOut: true,
-      validateInput: (v) => (v.trim() ? undefined : 'A name is required'),
-    });
-    if (!name) {
-      return;
-    }
-    const dirPath = await vscode.window.showInputBox({
-      title: 'Add project mount (2/3) — cluster directory',
-      prompt: 'Absolute path on the cluster ($SCRATCH/…, ~/… and $HOME/… work).',
-      placeHolder: 'e.g. $SCRATCH/shared/landsat or ~/projects/shared_dem',
-      ignoreFocusOut: true,
-      validateInput: (v) => (v.trim() ? undefined : 'A path is required'),
-    });
-    if (!dirPath) {
-      return;
-    }
-    const purpose = await vscode.window.showInputBox({
-      title: 'Add project mount (3/3) — purpose (optional)',
-      prompt: 'One line about what lives there — shown in the Launch palette and the Atlas.',
-      ignoreFocusOut: true,
-    });
-    if (purpose === undefined) {
-      return;
-    }
-    // Best-effort existence check over the shared session — a typo'd path
-    // would otherwise only fail at job time.
-    if (ssh.status === 'connected') {
-      try {
-        const expanded = await ssh.expandRemotePath(dirPath.trim());
-        const probe = await ssh.exec(`[ -d ${shq(expanded)} ] && echo yes`);
-        if (!probe.stdout.includes('yes')) {
-          const pick = await vscode.window.showWarningMessage(
-            `HPC Sync: "${dirPath.trim()}" was not found on ${cfg.host}. Add it anyway?`,
-            { modal: true },
-            'Add anyway'
-          );
-          if (pick !== 'Add anyway') {
-            return;
-          }
-        }
-      } catch {
-        /* connection hiccup — don't block the add */
-      }
-    }
-    await addProjectMount(name.trim(), dirPath.trim(), purpose.trim() || undefined);
-    void vscode.window.showInformationMessage(
-      `HPC Sync: mount "${name.trim()}" added — it appears in the Launch palette, Projects view and Atlas (env var available to jobs that use it).`
-    );
-    void atlas.refresh();
+    ProjectManagerPanel.show(ssh, engine, context.globalState, 'mounts');
   });
 
   register(

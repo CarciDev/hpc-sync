@@ -4,6 +4,22 @@ All notable changes to this project are documented here. The format is loosely
 based on [Keep a Changelog](https://keepachangelog.com/), and the project
 follows semantic-ish versioning while pre-1.0.
 
+## [0.15.3]
+### Fixed
+- **SSH keys now survive dev-container rebuilds.** A rebuild recreates the
+  container filesystem, deleting any key generated into the container's
+  ~/.ssh — this could silently destroy the registered key (e.g. right after
+  the extension's own "rebuild to apply mount ENV" prompt). The key is now
+  backed up to VS Code's client-side SecretStorage (the local OS keychain) on
+  every successful connect and before every extension-triggered rebuild, and
+  restored automatically on activation when ~/.ssh is empty — no
+  re-registration needed. The rebuild prompt says so.
+### Changed
+- "Add mount…" (Projects view) and the Add Project Mount command now open the
+  Project Manager scrolled to its mounts section and two-pane Cluster
+  explorer — browse the cluster and click "use as mount path" instead of
+  typing a path into an input box. The input-box wizard is gone.
+
 ## [0.15.2]
 ### Fixed
 - The current workspace no longer shows "no manifest — not synced by HPC
