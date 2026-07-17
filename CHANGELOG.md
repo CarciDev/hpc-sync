@@ -4,6 +4,15 @@ All notable changes to this project are documented here. The format is loosely
 based on [Keep a Changelog](https://keepachangelog.com/), and the project
 follows semantic-ish versioning while pre-1.0.
 
+## [0.15.7]
+### Fixed
+- Quick runs ("Run Script..." and the Launch panel's Quick mode) now see
+  project mounts: each mount is bind-mounted read-in-place and exposed as
+  HPC_MOUNT_<NAME>, exactly like Slurm jobs. Previously the quick-run
+  apptainer exec carried no mounts at all, so scripts silently fell back to
+  local test data. Mount directories missing on the cluster are skipped with
+  a warning instead of aborting the run.
+
 ## [0.15.6]
 ### Fixed
 - Only one Connect button while disconnected: the setup wizard's step 5 is

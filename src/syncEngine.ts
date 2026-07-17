@@ -7,7 +7,7 @@ import * as vscode from 'vscode';
 import ignore, { Ignore } from 'ignore';
 import { getConfig, HpcConfig, shq } from './config';
 import { log } from './log';
-import { stripMountEnvBlock } from './projectConfig';
+import { loadProjectConfig, mountEnvName, stripMountEnvBlock } from './projectConfig';
 import { SshManager } from './sshManager';
 
 export type StepStatus = 'pending' | 'running' | 'done' | 'error' | 'skipped';
@@ -1210,9 +1210,35 @@ export class SyncEngine implements vscode.Disposable {
       const remoteBase = await this.ssh.expandRemotePath(cfg.remoteProjectDir);
       const sifDir = await this.ssh.expandRemotePath(cfg.remoteSifDir);
       const outputDir = await this.ssh.expandRemotePath(outputDirOverride ?? cfg.outputDir);
+
+      // Quick runs read project mounts IN PLACE: bind each one and expose
+      // HPC_MOUNT_<NAME>, like Slurm jobs do — a declared mount must never be
+      // invisible to a run. Missing directories are skipped with a warning
+      // (a stale mount would otherwise abort apptainer on the bind).
+      let mountArgs = '';
+      const mounts = loadProjectConfig().mounts;
+      if (mounts.length > 0) {
+        const expanded: Array<{ name: string; path: string }> = [];
+        for (const m of mounts) {
+          expanded.push({ name: m.name, path: await this.ssh.expandRemotePath(m.path) });
+        }
+        const probe = await this.ssh.exec(
+          `for d in ${expanded.map((e) => shq(e.path)).join(' ')}; do [ -d "$d" ] && echo "$d"; done`
+        );
+        const existing = new Set(probe.stdout.split('\n').map((l) => l.trim()).filter(Boolean));
+        for (const e of expanded) {
+          if (existing.has(e.path)) {
+            mountArgs += ` --bind ${shq(e.path)} --env ${mountEnvName(e.name)}=${shq(e.path)}`;
+          } else {
+            log.appendLine(`  ⚠ mount "${e.name}" skipped — ${e.path} not found on the cluster`);
+          }
+        }
+      }
+
       const cmd =
         `mkdir -p ${shq(outputDir)} && ${cfg.apptainerLoad} && apptainer exec` +
         ` --bind ${shq(remoteBase)}:${shq(cfg.containerWorkdir)}` +
+        mountArgs +
         ` --env OUTPUT_DIR=${shq(outputDir)}` +
         ` --env PYTHONUNBUFFERED=1` +
         ` ${shq(`${sifDir}/${cfg.sifName}`)}` +
