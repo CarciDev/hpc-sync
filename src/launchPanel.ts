@@ -886,9 +886,10 @@ export class LaunchPanel {
     if (gpus > 0) { lines.push('#SBATCH --gpus-per-node=' + gpus); }
     // --tmp: schedule only on nodes with enough local disk for $SLURM_TMPDIR.
     // Slurm reads a bare number as MEGABYTES, which nobody means — default
-    // plain digits to G.
-    const tmpDisk = el('tmpDisk').value.trim().replace(/^(\d+)$/, '$1G');
-    if (/^\d+[KMGT]$/i.test(tmpDisk)) { lines.push('#SBATCH --tmp=' + tmpDisk); }
+    // plain digits to G. (NB: double backslashes — this code lives in a TS
+    // template literal, where \\d would cook down to a literal 'd'.)
+    const tmpDisk = el('tmpDisk').value.trim().replace(/^(\\d+)$/, '$1G');
+    if (/^\\d+[KMGT]$/i.test(tmpDisk)) { lines.push('#SBATCH --tmp=' + tmpDisk); }
     lines.push('#SBATCH --output=' + primary + '/slurm-%j.out');
     lines.push('');
     lines.push('set -euo pipefail');

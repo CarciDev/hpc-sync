@@ -4,6 +4,15 @@ All notable changes to this project are documented here. The format is loosely
 based on [Keep a Changelog](https://keepachangelog.com/), and the project
 follows semantic-ish versioning while pre-1.0.
 
+## [0.15.11]
+### Fixed
+- The "local disk (--tmp)" field silently emitted nothing: the validation
+  regex lived in a template literal where `\d` cooks down to a plain `d`,
+  so no value could ever match and the `#SBATCH --tmp=` line was dropped
+  (the job then landed on a small-disk node and the stage-in guard fired
+  despite the request). Escaped properly; verified by executing the emitted
+  webview code and sweeping every emitted regex for eaten backslashes.
+
 ## [0.15.10]
 ### Added
 - "local disk (--tmp)" field in the Launch panel's Resources row: emits
