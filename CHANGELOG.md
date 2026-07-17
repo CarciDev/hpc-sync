@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format is loosely
 based on [Keep a Changelog](https://keepachangelog.com/), and the project
 follows semantic-ish versioning while pre-1.0.
 
+## [0.15.6]
+### Fixed
+- Only one Connect button while disconnected: the setup wizard's step 5 is
+  the connect action; the status card's button appears only once a session
+  exists (Disconnect / cancel-while-connecting).
+
 ## [0.15.5]
 ### Changed
 - A project mount now appears either in the storage palette OR in the

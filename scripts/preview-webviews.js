@@ -131,6 +131,14 @@ write('atlasPanel', AtlasPanel.prototype.html.call(Object.create(AtlasPanel.prot
     scope: { label: 'Job 12345 · nisar_test_extension', project: 'nisar_test_extension', mountPaths: ['/scratch/dcarcien/shared/landsat'] } },
 ]);
 
+// ── Sync sidebar view (setup wizard, disconnected) ──
+const { PipelineViewProvider } = require(base + 'pipelineView.js');
+const stubEngine = { onDidChange: eventFn, getState: () => ({ active: false, steps: [] }) };
+write('pipelineView', new PipelineViewProvider({ onStatusChanged: eventFn }, stubEngine).html(), [
+  { type: 'state', status: 'disconnected', cfg: { host: 'rorqual.alliancecan.ca', user: 'dcarcien', allocGroup: 'rrg-dclausi' },
+    key: { ready: true, label: '/home/vscode/.ssh/id_ed25519' }, sync: { active: false, steps: [] } },
+], 'wizard shown, single connect button', 300);
+
 // ── Launch panel ──
 const { LaunchPanel } = require(base + 'launchPanel.js');
 const cap = (i, w, r) => ({ input: i, workspace: w, result: r });

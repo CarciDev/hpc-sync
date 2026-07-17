@@ -297,6 +297,10 @@ export class PipelineViewProvider implements vscode.WebviewViewProvider {
 
     el('dot').className = 'dot ' + state.status;
     el('target').textContent = (c.user || '?') + '@' + (c.host || 'not set');
+    // While disconnected the wizard's step 5 is THE connect button — showing
+    // a second one up here was pure duplication. Once connecting/connected
+    // this button is the only Disconnect/cancel, so it comes back.
+    el('connBtn').style.display = state.status === 'disconnected' ? 'none' : '';
     el('connBtn').textContent = state.status === 'disconnected' ? 'Connect' : 'Disconnect';
     const hints = {
       disconnected: 'Not connected. Fill the steps below, then Connect.',
