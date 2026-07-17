@@ -4,6 +4,15 @@ All notable changes to this project are documented here. The format is loosely
 based on [Keep a Changelog](https://keepachangelog.com/), and the project
 follows semantic-ish versioning while pre-1.0.
 
+## [0.15.8]
+### Added
+- Stage-in progress in the job console: the generated script announces the
+  total size up front, a background watcher prints
+  "staged X / Y (NN%) - Ns elapsed" every 15 seconds while the copies run,
+  and a completion line reports the final size and duration. Percent is
+  clamped for auto-extracted tars (extracted bytes can exceed the archive
+  size).
+
 ## [0.15.7]
 ### Fixed
 - Quick runs ("Run Script..." and the Launch panel's Quick mode) now see

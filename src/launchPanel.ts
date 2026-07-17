@@ -913,6 +913,20 @@ export class LaunchPanel {
       lines.push('IN="$SLURM_TMPDIR/input"');
       lines.push('OUT="$SLURM_TMPDIR/out"');
       lines.push('mkdir -p "$IN" "$OUT"');
+      // Console progress: announce the total up front, then a background
+      // watcher prints staged/total every 15s until the copies finish (clean
+      // appended lines — carriage-return tty progress turns into junk in a log).
+      const stagePaths = [];
+      for (const c of pipe.inputs) {
+        for (const p0 of c.paths.split('\\n').map(function (s) { return s.trim(); }).filter(Boolean)) {
+          stagePaths.push(p0);
+        }
+      }
+      lines.push('T0=$SECONDS');
+      lines.push('STAGE_TOTAL=$(du -sbc ' + stagePaths.map(function (p) { return '"' + p + '"'; }).join(' ') + ' 2>/dev/null | awk \\'END{print $1}\\')');
+      lines.push('echo "[hpc-sync] stage-in starting: $(numfmt --to=iec "$STAGE_TOTAL" 2>/dev/null || echo "$STAGE_TOTAL") total from ' + stagePaths.length + ' source(s)"');
+      // percent is clamped: extracted tars can exceed the archive size
+      lines.push('( while sleep 15; do CUR=$(du -sb "$IN" 2>/dev/null | cut -f1); if [ -n "$STAGE_TOTAL" ] && [ "$STAGE_TOTAL" -gt 0 ] && [ -n "$CUR" ]; then P=$((100*CUR/STAGE_TOTAL)); if [ "$P" -gt 100 ]; then P=100; fi; echo "[hpc-sync] stage-in progress: $(numfmt --to=iec "$CUR" 2>/dev/null || echo "$CUR") / $(numfmt --to=iec "$STAGE_TOTAL" 2>/dev/null || echo "$STAGE_TOTAL") ($P%) - $((SECONDS-T0))s elapsed"; fi; done ) & STAGE_MON=$!');
       for (const c of pipe.inputs) {
         const paths = c.paths.split('\\n').map(function (s) { return s.trim(); }).filter(Boolean);
         for (const p of paths) {
@@ -923,6 +937,8 @@ export class LaunchPanel {
           }
         }
       }
+      lines.push('kill "$STAGE_MON" 2>/dev/null || true');
+      lines.push('echo "[hpc-sync] stage-in complete: $(du -sh "$IN" | cut -f1) in $((SECONDS-T0))s"');
       lines.push('# deliver results to every destination, even on failure/time-limit');
       const copies = ['manifest "$OUT" > "$META/produced.txt"'];
       copies.push('awk -F"|" \\'{n++; s+=$2} END{printf "[hpc-sync] produced %d files (%.1f MB)\\\\n", n, s/1048576}\\' "$META/produced.txt"');
