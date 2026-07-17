@@ -4,6 +4,13 @@ All notable changes to this project are documented here. The format is loosely
 based on [Keep a Changelog](https://keepachangelog.com/), and the project
 follows semantic-ish versioning while pre-1.0.
 
+## [0.15.9]
+### Changed
+- Stage-in progress lines now show transfer rate and estimated time
+  remaining ("16G / 1.2T (1%) - 540MB/s, ~37m left") instead of elapsed
+  seconds; elapsed time stays on the completion line. ETA comes from the
+  average rate so far.
+
 ## [0.15.8]
 ### Added
 - Stage-in progress in the job console: the generated script announces the

@@ -925,8 +925,18 @@ export class LaunchPanel {
       lines.push('T0=$SECONDS');
       lines.push('STAGE_TOTAL=$(du -sbc ' + stagePaths.map(function (p) { return '"' + p + '"'; }).join(' ') + ' 2>/dev/null | awk \\'END{print $1}\\')');
       lines.push('echo "[hpc-sync] stage-in starting: $(numfmt --to=iec "$STAGE_TOTAL" 2>/dev/null || echo "$STAGE_TOTAL") total from ' + stagePaths.length + ' source(s)"');
-      // percent is clamped: extracted tars can exceed the archive size
-      lines.push('( while sleep 15; do CUR=$(du -sb "$IN" 2>/dev/null | cut -f1); if [ -n "$STAGE_TOTAL" ] && [ "$STAGE_TOTAL" -gt 0 ] && [ -n "$CUR" ]; then P=$((100*CUR/STAGE_TOTAL)); if [ "$P" -gt 100 ]; then P=100; fi; echo "[hpc-sync] stage-in progress: $(numfmt --to=iec "$CUR" 2>/dev/null || echo "$CUR") / $(numfmt --to=iec "$STAGE_TOTAL" 2>/dev/null || echo "$STAGE_TOTAL") ($P%) - $((SECONDS-T0))s elapsed"; fi; done ) & STAGE_MON=$!');
+      // percent clamped (extracted tars can exceed the archive size);
+      // remaining time from the average rate so far
+      lines.push('( while sleep 15; do');
+      lines.push('    CUR=$(du -sb "$IN" 2>/dev/null | cut -f1); E=$((SECONDS-T0))');
+      lines.push('    if [ -n "$STAGE_TOTAL" ] && [ "$STAGE_TOTAL" -gt 0 ] && [ -n "$CUR" ] && [ "$CUR" -gt 0 ] && [ "$E" -gt 0 ]; then');
+      lines.push('      P=$((100*CUR/STAGE_TOTAL)); if [ "$P" -gt 100 ]; then P=100; fi');
+      lines.push('      RATE=$((CUR/E)); REM=$((STAGE_TOTAL-CUR)); if [ "$REM" -lt 0 ]; then REM=0; fi');
+      lines.push('      if [ "$RATE" -gt 0 ]; then ETA=$((REM/RATE)); else ETA=0; fi');
+      lines.push('      if [ "$ETA" -ge 3600 ]; then ETXT="$((ETA/3600))h $(((ETA%3600)/60))m"; elif [ "$ETA" -ge 60 ]; then ETXT="$((ETA/60))m $((ETA%60))s"; else ETXT="\${ETA}s"; fi');
+      lines.push('      echo "[hpc-sync] stage-in progress: $(numfmt --to=iec "$CUR" 2>/dev/null || echo "$CUR") / $(numfmt --to=iec "$STAGE_TOTAL" 2>/dev/null || echo "$STAGE_TOTAL") ($P%) - $(numfmt --to=iec "$RATE" 2>/dev/null || echo "$RATE")B/s, ~$ETXT left"');
+      lines.push('    fi');
+      lines.push('  done ) & STAGE_MON=$!');
       for (const c of pipe.inputs) {
         const paths = c.paths.split('\\n').map(function (s) { return s.trim(); }).filter(Boolean);
         for (const p of paths) {
