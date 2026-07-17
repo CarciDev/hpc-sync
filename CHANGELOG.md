@@ -4,6 +4,18 @@ All notable changes to this project are documented here. The format is loosely
 based on [Keep a Changelog](https://keepachangelog.com/), and the project
 follows semantic-ish versioning while pre-1.0.
 
+## [0.15.10]
+### Added
+- "local disk (--tmp)" field in the Launch panel's Resources row: emits
+  `#SBATCH --tmp=...` so Slurm only schedules the job on nodes with enough
+  node-local disk for the staged inputs (bare numbers default to G — Slurm
+  would read them as MB).
+- Fail-fast disk guard in the generated script: before staging starts, the
+  required total is compared against the free space in $SLURM_TMPDIR; if it
+  cannot fit, the job exits in seconds with a clear message (request --tmp,
+  trim the input chip's paths, or read in place) instead of copying for
+  minutes and dying on ENOSPC.
+
 ## [0.15.9]
 ### Changed
 - Stage-in progress lines now show transfer rate and estimated time

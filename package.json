@@ -2,7 +2,7 @@
   "name": "hpc-sync",
   "displayName": "HPC Sync",
   "description": "Sync, build, run and monitor Slurm/Apptainer HPC workloads from VS Code over a single shared SSH session, with a visual job builder and a live cluster dashboard.",
-  "version": "0.15.9",
+  "version": "0.15.10",
   "publisher": "david-carciente",
   "private": true,
   "license": "MIT",

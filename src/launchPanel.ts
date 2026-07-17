@@ -412,6 +412,8 @@ export class LaunchPanel {
       <div class="field"><span>CPUs</span><input type="text" id="cpus" value="4"></div>
       <div class="field"><span>memory</span><input type="text" id="mem" value="8G"></div>
       <div class="field"><span>GPUs</span><input type="text" id="gpus" value="0"></div>
+      <div class="field" title="Minimum node-local disk for $SLURM_TMPDIR (sbatch --tmp). Only nodes with at least this much local disk are eligible — needed when staged inputs exceed the default node's space, but large values can mean a longer queue wait (few nodes qualify). Leave empty for any node.">
+        <span>local disk (--tmp)</span><input type="text" id="tmpDisk" value="" placeholder="e.g. 1300G"></div>
       <button class="secondary" id="applySugg" title="Modest defaults that schedule fast">Apply suggested</button>
     </div>
     <div class="row">
@@ -548,7 +550,7 @@ export class LaunchPanel {
       el('gpus').value = init.tpl.gpuOnly ? '1' : '0';
       regen();
     };
-    ['args', 'jobName', 'time', 'cpus', 'mem', 'gpus', 'quickOut'].forEach(function (id) {
+    ['args', 'jobName', 'time', 'cpus', 'mem', 'gpus', 'tmpDisk', 'quickOut'].forEach(function (id) {
       el(id).addEventListener('input', regen);
     });
     el('trackDiff').addEventListener('change', regen);
@@ -882,6 +884,11 @@ export class LaunchPanel {
       '#SBATCH --mem=' + (el('mem').value.trim() || '8G')
     );
     if (gpus > 0) { lines.push('#SBATCH --gpus-per-node=' + gpus); }
+    // --tmp: schedule only on nodes with enough local disk for $SLURM_TMPDIR.
+    // Slurm reads a bare number as MEGABYTES, which nobody means — default
+    // plain digits to G.
+    const tmpDisk = el('tmpDisk').value.trim().replace(/^(\d+)$/, '$1G');
+    if (/^\d+[KMGT]$/i.test(tmpDisk)) { lines.push('#SBATCH --tmp=' + tmpDisk); }
     lines.push('#SBATCH --output=' + primary + '/slurm-%j.out');
     lines.push('');
     lines.push('set -euo pipefail');
@@ -925,6 +932,15 @@ export class LaunchPanel {
       lines.push('T0=$SECONDS');
       lines.push('STAGE_TOTAL=$(du -sbc ' + stagePaths.map(function (p) { return '"' + p + '"'; }).join(' ') + ' 2>/dev/null | awk \\'END{print $1}\\')');
       lines.push('echo "[hpc-sync] stage-in starting: $(numfmt --to=iec "$STAGE_TOTAL" 2>/dev/null || echo "$STAGE_TOTAL") total from ' + stagePaths.length + ' source(s)"');
+      // Fail fast when the data cannot fit: dying here costs 2 seconds, dying
+      // at ENOSPC costs the whole copy. (Tar sources are counted at archive
+      // size, so extraction can still overrun — this catches the gross case.)
+      lines.push('AVAIL=$(df --output=avail -B1 "$SLURM_TMPDIR" 2>/dev/null | tail -1)');
+      lines.push('if [ -n "$AVAIL" ] && [ -n "$STAGE_TOTAL" ] && [ "$STAGE_TOTAL" -gt "$AVAIL" ]; then');
+      lines.push('  echo "[hpc-sync] FATAL: stage-in needs $(numfmt --to=iec "$STAGE_TOTAL" 2>/dev/null || echo "$STAGE_TOTAL") but only $(numfmt --to=iec "$AVAIL" 2>/dev/null || echo "$AVAIL") is free in $SLURM_TMPDIR on this node."');
+      lines.push('  echo "[hpc-sync] Fix: request bigger-disk nodes with local disk (--tmp) in the Launch panel, stage fewer paths on the input chip, or read the data in place."');
+      lines.push('  exit 1');
+      lines.push('fi');
       // percent clamped (extracted tars can exceed the archive size);
       // remaining time from the average rate so far
       lines.push('( while sleep 15; do');
