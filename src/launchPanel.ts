@@ -571,10 +571,18 @@ export class LaunchPanel {
   }
 
   // ── palette ──
+  function mountInUse(storId) {
+    return pipe.inputs.some(function (c) { return c.storId === storId; }) ||
+      pipe.results.some(function (c) { return c.storId === storId; });
+  }
+
   function renderPalette() {
     const pal = el('palette');
     pal.innerHTML = '<div class="ptitle">STORAGES</div>';
     for (const p of init.palette) {
+      // a mount lives either in the palette OR in the pipeline, never both —
+      // generic storages stay (multiple destinations are legitimate)
+      if (p.bind && mountInUse(p.id)) { continue; }
       const d = document.createElement('div');
       d.className = 'pitem';
       d.setAttribute('draggable', 'true');
@@ -651,6 +659,7 @@ export class LaunchPanel {
     for (const p of init.palette) {
       if (!canAccept(role, p.id)) { continue; }
       if (role === 'workspace' && pipe.workspace) { continue; }
+      if (p.bind && mountInUse(p.id)) { continue; }
       any = true;
       const b = document.createElement('button');
       b.textContent = p.label;
@@ -738,6 +747,8 @@ export class LaunchPanel {
   }
 
   function renderPipeline() {
+    renderPalette(); // mounts in use leave the palette; removed chips return
+
     // INPUTS
     const ci = el('chips-inputs');
     ci.innerHTML = '';

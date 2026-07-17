@@ -4,6 +4,14 @@ All notable changes to this project are documented here. The format is loosely
 based on [Keep a Changelog](https://keepachangelog.com/), and the project
 follows semantic-ish versioning while pre-1.0.
 
+## [0.15.5]
+### Changed
+- A project mount now appears either in the storage palette OR in the
+  pipeline, never both: while its chip sits in INPUTS/RESULTS the palette
+  card (and its "+ add" menu entry) is hidden, and it returns the moment the
+  chip is removed. Generic storages are unaffected — multiple destinations
+  stay legitimate.
+
 ## [0.15.4]
 ### Changed
 - Project mounts are INPUTS by default in the Launch panel: declaring a mount
